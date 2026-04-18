@@ -1,14 +1,14 @@
 server:
   http:
-    addr: 0.0.0.0:8000
-    timeout: 1s
-  grpc:
-    addr: 0.0.0.0:9000
-    timeout: 1s
+    addr: 0.0.0.0:5001
+    timeout: 5s
 data:
   database:
-    driver: mysql
-    source: root:root@tcp(127.0.0.1:3306)/test?parseTime=True&loc=Local
+    driver: sqlite
+    # modernc.org/sqlite uses the "sqlite" driver name.
+    # file: prefix + SQLite pragmas via URI query; foreign keys enabled.
+    source: file:./data/dockery.db?cache=shared&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)
+  # Redis is declared for conf-schema compatibility; Dockery does not use it yet.
   redis:
     addr: 127.0.0.1:6379
     read_timeout: 0.2s

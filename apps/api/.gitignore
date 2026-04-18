@@ -32,6 +32,14 @@ Thumbs.db
 *.log
 bin/
 
+# runtime data (SQLite + signing keys)
+/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.pem
+
 # Develop tools
 .vscode/
 .idea/

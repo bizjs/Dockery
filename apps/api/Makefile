@@ -55,11 +55,34 @@ generate:
 	go generate ./...
 	go mod tidy
 
+.PHONY: ent
+# generate ent code from internal/data/ent/schema
+ent:
+	cd internal/data/ent && go run -mod=mod entgo.io/ent/cmd/ent generate ./schema
+
+.PHONY: wire
+# regenerate cmd/api/wire_gen.go from wire.go
+wire:
+	cd cmd/api && go run -mod=mod github.com/google/wire/cmd/wire
+
+.PHONY: tidy
+# download deps and clean go.sum
+tidy:
+	go mod tidy
+
+.PHONY: run
+# run the api against ./configs
+run:
+	mkdir -p ./data
+	go run ./cmd/api -conf ./configs
+
 .PHONY: all
 # generate all
 all:
 	make api
 	make config
+	make ent
+	make wire
 	make generate
 
 # show help
