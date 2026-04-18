@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"api/internal/conf"
+
+	"github.com/bizjs/kratoscarf/auth/session"
 )
 
 // NewKeystoreConfigFromConf maps the protobuf-adjacent Dockery config
@@ -28,5 +30,28 @@ func NewTokenIssuerConfigFromConf(c *conf.Dockery) TokenIssuerConfig {
 		Issuer:   c.Token.Issuer,
 		Audience: c.Token.Audience,
 		TTL:      ttl,
+	}
+}
+
+// NewSessionConfigFromConf maps the yaml Session section into a
+// kratoscarf session.Config. The kratoscarf struct uses camelCase yaml
+// tags internally, but Dockery exposes snake_case through its own conf
+// struct for style consistency — this adapter is the bridge.
+func NewSessionConfigFromConf(c *conf.Dockery) session.Config {
+	maxAge := time.Duration(c.Session.TTLHours) * time.Hour
+	if maxAge <= 0 {
+		maxAge = 7 * 24 * time.Hour
+	}
+	name := c.Session.CookieName
+	if name == "" {
+		name = "dockery_session"
+	}
+	return session.Config{
+		MaxAge:     maxAge,
+		CookieName: name,
+		CookiePath: "/",
+		Secure:     c.Session.CookieSecure,
+		HTTPOnly:   true,
+		SameSite:   "lax",
 	}
 }

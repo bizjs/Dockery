@@ -3,46 +3,58 @@ package server
 import (
 	"api/internal/service"
 
+	"github.com/bizjs/kratoscarf/auth/session"
 	"github.com/bizjs/kratoscarf/router"
 )
 
-// registerRoutes wires every Dockery endpoint onto the router, grouped
-// by authentication layer. Keeping the full surface area in one file
-// makes it straightforward to audit what is public vs. session-gated
-// vs. admin-only without chasing per-domain helpers.
-func registerRoutes(r *router.Router, svcs *service.Services) {
+// registerRoutes wires every Dockery endpoint onto the router.
+//
+// Three-tier grouping layered via kratoscarf router.Group (middleware
+// accumulates across nested groups):
+//
+//   - public          — /healthz /readyz /ping /token   (no session)
+//   - /api + session  — /api/auth/login, other /api endpoints gain
+//     session context so handlers can populate it.
+//   - /api + session + RequireSession             — logged-in users.
+//   - /api + session + RequireSession + RequireAdmin — admin only.
+func registerRoutes(r *router.Router, svcs *service.Services, sm *session.Manager) {
 	registerPublicRoutes(r, svcs)
-	registerSessionRoutes(r, svcs)
-	registerAdminRoutes(r, svcs)
+
+	// All /api/* requests load a session so Login can write into it
+	// and middleware further down can read it.
+	api := r.Group("/api", session.Middleware(sm))
+	registerAuthRoutes(api, svcs)
+	registerSessionRoutes(api, svcs)
+	registerAdminRoutes(api, svcs)
 }
 
-// registerPublicRoutes mounts endpoints reachable without authentication.
-// The /token endpoint parses Basic Auth inside its handler and replies in
-// the Docker-spec response shape rather than the kratoscarf envelope.
+// registerPublicRoutes — no authentication, no session loading.
+// The /token endpoint parses its own Basic Auth header and returns
+// the Docker-spec JSON shape via ctx.JSON.
 func registerPublicRoutes(r *router.Router, svcs *service.Services) {
-	svcs.System.Register(r) // /healthz, /readyz, /ping
-
+	svcs.System.Register(r)
 	r.GET("/token", svcs.Token.Issue)
-	r.POST("/api/auth/login", svcs.Auth.Login)
 }
 
-// registerSessionRoutes mounts endpoints that require a valid UI session
-// (HttpOnly cookie + JWT) but do not require admin role.
-func registerSessionRoutes(r *router.Router, svcs *service.Services) {
-	g := r.Group("/api", RequireSession())
+// registerAuthRoutes — endpoints that need session context but not
+// a valid authenticated session (login is where the session is
+// populated for the first time).
+func registerAuthRoutes(api *router.Router, svcs *service.Services) {
+	api.POST("/auth/login", svcs.Auth.Login)
+}
+
+// registerSessionRoutes — must have an authenticated session but no
+// role restriction.
+func registerSessionRoutes(api *router.Router, svcs *service.Services) {
+	g := api.Group("", RequireSession())
 
 	g.POST("/auth/logout", svcs.Auth.Logout)
 	g.GET("/auth/me", svcs.Auth.Me)
 
-	// Password change is session-only; the handler enforces
-	// "id==caller OR caller.role==admin".
+	// Self-service password change — handler enforces self-or-admin.
 	g.PUT("/users/{id}/password", svcs.User.SetPassword)
 
-	// UI → upstream-registry proxy (JWT injected server-side).
-	// NOTE: {name} defaults to [^/]+ in gorilla/mux. Docker image
-	// names commonly contain slashes (e.g. "alice/app"); M2/M3 will
-	// switch to {name:.+} with careful trailing-literal regexes when
-	// the proxy is actually implemented.
+	// UI → upstream-registry proxy.
 	g.GET("/registry/catalog", svcs.Registry.Catalog)
 	g.GET("/registry/{name}/tags", svcs.Registry.Tags)
 	g.GET("/registry/{name}/manifests/{ref}", svcs.Registry.GetManifest)
@@ -50,11 +62,9 @@ func registerSessionRoutes(r *router.Router, svcs *service.Services) {
 	g.GET("/registry/{name}/blobs/{digest}", svcs.Registry.GetBlob)
 }
 
-// registerAdminRoutes mounts endpoints that additionally require
-// role == admin. RequireSession must run before RequireAdmin so that
-// the user identity is available when checking the role.
-func registerAdminRoutes(r *router.Router, svcs *service.Services) {
-	g := r.Group("/api", RequireSession(), RequireAdmin())
+// registerAdminRoutes — authenticated AND role=admin.
+func registerAdminRoutes(api *router.Router, svcs *service.Services) {
+	g := api.Group("", RequireSession(), RequireAdmin())
 
 	g.GET("/users", svcs.User.List)
 	g.POST("/users", svcs.User.Create)

@@ -27,3 +27,7 @@ dockery:
     # First-launch password. Prefer DOCKERY_ADMIN_PASSWORD env var;
     # this yaml value is accepted for easier local dev.
     password: ""
+  session:
+    ttl_hours: 168
+    cookie_name: dockery_session
+    cookie_secure: false     # set true behind HTTPS in production

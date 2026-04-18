@@ -13,6 +13,7 @@ type Dockery struct {
 	Keystore DockeryKeystore `json:"keystore" yaml:"keystore"`
 	Token    DockeryToken    `json:"token"    yaml:"token"`
 	Admin    DockeryAdmin    `json:"admin"    yaml:"admin"`
+	Session  DockerySession  `json:"session"  yaml:"session"`
 }
 
 // DockeryKeystore is the filesystem location of the Ed25519 signing
@@ -42,4 +43,19 @@ type DockeryToken struct {
 type DockeryAdmin struct {
 	Username string `json:"username" yaml:"username"`
 	Password string `json:"password" yaml:"password"`
+}
+
+// DockerySession configures the Web UI cookie session, backed by
+// kratoscarf's auth/session package (server-side store, random session
+// ID in cookie). Distinct from the Ed25519 registry token.
+//
+// Session data lives in an in-memory store for M3; M4 can swap in a
+// SQLite-backed Store so sessions survive dockery-api restarts.
+type DockerySession struct {
+	// Session lifetime in hours. Default: 168 (7 days).
+	TTLHours int `json:"ttl_hours" yaml:"ttl_hours"`
+	// HTTP cookie name. Default: "dockery_session".
+	CookieName string `json:"cookie_name" yaml:"cookie_name"`
+	// Set to true when serving over HTTPS (production). Marks cookie Secure.
+	CookieSecure bool `json:"cookie_secure" yaml:"cookie_secure"`
 }

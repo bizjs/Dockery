@@ -4,6 +4,7 @@ import (
 	"api/internal/conf"
 	"api/internal/service"
 
+	"github.com/bizjs/kratoscarf/auth/session"
 	"github.com/bizjs/kratoscarf/middleware"
 	"github.com/bizjs/kratoscarf/response"
 	"github.com/bizjs/kratoscarf/router"
@@ -26,7 +27,7 @@ import (
 // Routes are grouped by authentication requirement; the /token endpoint
 // bypasses the envelope (Docker spec requires its own JSON shape) by
 // writing via ctx.JSON directly.
-func NewHTTPServer(c *conf.Server, svcs *service.Services, logger log.Logger) *http.Server {
+func NewHTTPServer(c *conf.Server, svcs *service.Services, sm *session.Manager, logger log.Logger) *http.Server {
 	opts := []http.ServerOption{
 		// Route HTTP transport logs (e.g. "server listening on …")
 		// through the injected logger; tests can feed io.Discard to
@@ -59,6 +60,6 @@ func NewHTTPServer(c *conf.Server, svcs *service.Services, logger log.Logger) *h
 		router.WithResponseWrapper(response.Wrap),
 	)
 
-	registerRoutes(r, svcs)
+	registerRoutes(r, svcs, sm)
 	return srv
 }

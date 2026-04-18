@@ -2,10 +2,12 @@ package server_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -17,6 +19,8 @@ import (
 	"api/internal/data"
 	"api/internal/server"
 	"api/internal/service"
+
+	"github.com/bizjs/kratoscarf/auth/session"
 
 	"github.com/go-kratos/kratos/v2/log"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -32,6 +36,7 @@ type harness struct {
 	t       *testing.T
 	baseURL string
 	client  *http.Client
+	users   *biz.UserUsecase
 	stop    func()
 }
 
@@ -93,16 +98,28 @@ func newHarness(t *testing.T) *harness {
 			Timeout: durationpb.New(5 * time.Second),
 		},
 	}
-	kratosSrv := server.NewHTTPServer(confSrv, svcs, logger)
+	sm := session.NewManager(session.NewMemoryStore(), session.Config{
+		MaxAge:     time.Hour,
+		CookieName: "dockery_session",
+		CookiePath: "/",
+		HTTPOnly:   true,
+	})
+	kratosSrv := server.NewHTTPServer(confSrv, svcs, sm, logger)
 
 	testSrv := httptest.NewServer(kratosSrv.Handler)
 	client := testSrv.Client()
 	client.Timeout = 5 * time.Second
+	// A real cookie jar so Set-Cookie from /api/auth/login persists into
+	// follow-up requests; without this, session-based tests would all
+	// appear "unauthenticated" on the second hop.
+	jar, _ := cookiejar.New(nil)
+	client.Jar = jar
 
 	return &harness{
 		t:       t,
 		baseURL: testSrv.URL,
 		client:  client,
+		users:   userUC,
 		stop: func() {
 			testSrv.Close()
 			cleanup()
@@ -322,33 +339,29 @@ func TestRouteMatrix(t *testing.T) {
 		body   any
 		want   int
 	}{
-		// Public
+		// Public (no session)
 		{http.MethodGet, "/healthz", nil, 200},
 		{http.MethodGet, "/readyz", nil, 200},
-		// /token is now implemented; probe without credentials returns an
-		// anonymous-access JWT (200). See TestTokenEndpoint_AnonymousHandshake.
 		{http.MethodGet, "/token", nil, 200},
-		// Session stubs pass through in M1
-		{http.MethodPost, "/api/auth/logout", nil, 501},
-		{http.MethodGet, "/api/auth/me", nil, 501},
-		{http.MethodGet, "/api/registry/catalog", nil, 501},
-		// NOTE: repo names here are single-segment; see M2 TODO in routes.go.
-		{http.MethodGet, "/api/registry/aliceapp/tags", nil, 501},
-		{http.MethodGet, "/api/registry/aliceapp/manifests/latest", nil, 501},
-		{http.MethodDelete, "/api/registry/aliceapp/manifests/latest", nil, 501},
-		{http.MethodGet, "/api/registry/aliceapp/blobs/sha256:abc", nil, 501},
-		// Password change needs a valid body to pass validation
+		// Session-required: no cookie → 401 (RequireSession middleware).
+		{http.MethodPost, "/api/auth/logout", nil, 401},
+		{http.MethodGet, "/api/auth/me", nil, 401},
+		{http.MethodGet, "/api/registry/catalog", nil, 401},
+		{http.MethodGet, "/api/registry/aliceapp/tags", nil, 401},
+		{http.MethodGet, "/api/registry/aliceapp/manifests/latest", nil, 401},
+		{http.MethodDelete, "/api/registry/aliceapp/manifests/latest", nil, 401},
+		{http.MethodGet, "/api/registry/aliceapp/blobs/sha256:abc", nil, 401},
 		{http.MethodPut, "/api/users/1/password", map[string]string{
 			"new_password": "a-strong-password-42",
-		}, 501},
-		// Admin stubs pass through in M1
-		{http.MethodGet, "/api/users", nil, 501},
-		{http.MethodGet, "/api/users/1", nil, 501},
-		{http.MethodDelete, "/api/users/1", nil, 501},
-		{http.MethodGet, "/api/users/1/permissions", nil, 501},
-		{http.MethodPost, "/api/admin/gc", nil, 501},
-		{http.MethodPost, "/api/admin/rotate-signing-key", nil, 501},
-		{http.MethodGet, "/api/audit", nil, 501},
+		}, 401},
+		// Admin-only: no cookie → 401 (RequireSession trips first).
+		{http.MethodGet, "/api/users", nil, 401},
+		{http.MethodGet, "/api/users/1", nil, 401},
+		{http.MethodDelete, "/api/users/1", nil, 401},
+		{http.MethodGet, "/api/users/1/permissions", nil, 401},
+		{http.MethodPost, "/api/admin/gc", nil, 401},
+		{http.MethodPost, "/api/admin/rotate-signing-key", nil, 401},
+		{http.MethodGet, "/api/audit", nil, 401},
 	}
 
 	for _, tc := range cases {
@@ -375,24 +388,85 @@ func TestUnknownRoute_404(t *testing.T) {
 	}
 }
 
-// Admin POST endpoints that take bodies with required fields should
-// reject empty bodies at the validator layer, proving kratoscarf's
-// WithValidator is actually attached to admin-group routes too.
-func TestAdminCreateUser_ValidatorWiredOnGroupedRoutes(t *testing.T) {
+// Validator on grouped routes — POST /api/auth/login is inside the
+// /api session group but outside RequireSession, so unauthenticated
+// requests with a bad body still reach the validator (return 422).
+// Confirms kratoscarf's WithValidator propagates into child groups.
+func TestValidatorWiredOnGroupedRoutes(t *testing.T) {
 	h := newHarness(t)
 	defer h.stop()
 
-	resp, raw := h.do(http.MethodPost, "/api/users", map[string]any{})
+	resp, raw := h.do(http.MethodPost, "/api/auth/login", map[string]any{})
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("want 422 on empty body, got %d; body=%s", resp.StatusCode, raw)
 	}
+}
 
+// TestAdminFlow — end-to-end: bootstrap admin → login → list/create
+// user → hit an admin endpoint with the session cookie attached.
+//
+// This exercises all M3 wiring at once: kratoscarf session middleware
+// loads/saves, Set-Cookie reaches the client, RequireSession +
+// RequireAdmin accept the cookie, UserService.Create inserts a row.
+func TestAdminFlow(t *testing.T) {
+	h := newHarness(t)
+	defer h.stop()
+
+	// Bootstrap an admin directly through biz (bypasses HTTP).
+	ctx := context.Background()
+	if err := h.users.EnsureAdmin(ctx, "admin", "a-strong-password-42"); err != nil {
+		t.Fatalf("ensure admin: %v", err)
+	}
+
+	// Unauthenticated request must be refused.
+	resp, _ := h.do(http.MethodGet, "/api/users", nil)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("pre-login want 401, got %d", resp.StatusCode)
+	}
+
+	// Log in. The Set-Cookie response header lands in harness.client's
+	// cookie jar automatically (net/http.Client).
+	resp, raw := h.do(http.MethodPost, "/api/auth/login", map[string]string{
+		"username": "admin",
+		"password": "a-strong-password-42",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login want 200, got %d; body=%s", resp.StatusCode, raw)
+	}
+	// Confirm a session cookie was set.
+	if len(resp.Cookies()) == 0 {
+		t.Fatal("expected Set-Cookie after successful login")
+	}
+
+	// /api/auth/me — now authenticated.
+	resp, raw = h.do(http.MethodGet, "/api/auth/me", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("me want 200, got %d; body=%s", resp.StatusCode, raw)
+	}
+
+	// Admin list — allowed; empty until we Create.
+	resp, raw = h.do(http.MethodGet, "/api/users", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list users want 200, got %d; body=%s", resp.StatusCode, raw)
+	}
+
+	// Create a second user — admin-allowed.
 	resp, raw = h.do(http.MethodPost, "/api/users", map[string]string{
 		"username": "alice",
-		"password": "a-strong-password-42",
-		"role":     "invalid-role",
+		"password": "another-strong-password",
+		"role":     "write",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create user want 200, got %d; body=%s", resp.StatusCode, raw)
+	}
+
+	// Validation still fires inside admin group.
+	resp, _ = h.do(http.MethodPost, "/api/users", map[string]string{
+		"username": "bob",
+		"password": "weak",
+		"role":     "view",
 	})
 	if resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("invalid role want 422, got %d; body=%s", resp.StatusCode, raw)
+		t.Fatalf("short-password want 422, got %d", resp.StatusCode)
 	}
 }

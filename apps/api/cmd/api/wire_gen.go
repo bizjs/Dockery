@@ -13,6 +13,8 @@ import (
 	"api/internal/server"
 	"api/internal/service"
 
+	"github.com/bizjs/kratoscarf/auth/session"
+
 	"github.com/go-kratos/kratos/v2"
 	"github.com/go-kratos/kratos/v2/log"
 )
@@ -47,6 +49,10 @@ func wireApp(confServer *conf.Server, confData *conf.Data, dockery *conf.Dockery
 		return nil, nil, err
 	}
 
+	sessionStore := session.NewMemoryStore()
+	sessionCfg := biz.NewSessionConfigFromConf(dockery)
+	sessionManager := session.NewManager(sessionStore, sessionCfg)
+
 	systemService := service.NewSystemService()
 	authService := service.NewAuthService(userUsecase)
 	userService := service.NewUserService(userUsecase, permissionUsecase)
@@ -63,7 +69,7 @@ func wireApp(confServer *conf.Server, confData *conf.Data, dockery *conf.Dockery
 		Token:      tokenService,
 		Admin:      adminService,
 	}
-	httpServer := server.NewHTTPServer(confServer, services, logger)
+	httpServer := server.NewHTTPServer(confServer, services, sessionManager, logger)
 	app := newApp(logger, httpServer, userUsecase, dockery)
 	return app, func() {
 		cleanup()

@@ -26,3 +26,7 @@ dockery:
     username: admin
     # MUST be provided via env DOCKERY_ADMIN_PASSWORD on first container boot.
     password: ""
+  session:
+    ttl_hours: 168
+    cookie_name: dockery_session
+    cookie_secure: false
