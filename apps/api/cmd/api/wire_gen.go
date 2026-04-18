@@ -7,7 +7,6 @@
 package main
 
 import (
-	"api/internal/biz"
 	"api/internal/conf"
 	"api/internal/data"
 	"api/internal/server"
@@ -23,16 +22,31 @@ import (
 // Injectors from wire.go:
 
 // wireApp init kratos application.
+//
+// biz.ProviderSet is intentionally omitted until M2 populates it with
+// usecases; wire rejects empty provider sets as "unused".
 func wireApp(confServer *conf.Server, confData *conf.Data, logger log.Logger) (*kratos.App, func(), error) {
+	systemService := service.NewSystemService()
 	dataData, cleanup, err := data.NewData(confData, logger)
 	if err != nil {
 		return nil, nil, err
 	}
-	greeterRepo := data.NewGreeterRepo(dataData, logger)
-	greeterUsecase := biz.NewGreeterUsecase(greeterRepo)
-	greeterService := service.NewGreeterService(greeterUsecase)
-	systemService := service.NewSystemService()
-	httpServer := server.NewHTTPServer(confServer, greeterService, systemService, logger)
+	authService := service.NewAuthService(dataData)
+	userService := service.NewUserService(dataData)
+	permissionService := service.NewPermissionService(dataData)
+	registryService := service.NewRegistryService(dataData)
+	tokenService := service.NewTokenService(dataData)
+	adminService := service.NewAdminService(dataData)
+	services := &service.Services{
+		System:     systemService,
+		Auth:       authService,
+		User:       userService,
+		Permission: permissionService,
+		Registry:   registryService,
+		Token:      tokenService,
+		Admin:      adminService,
+	}
+	httpServer := server.NewHTTPServer(confServer, services, logger)
 	app := newApp(logger, httpServer)
 	return app, func() {
 		cleanup()

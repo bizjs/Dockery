@@ -76,6 +76,16 @@ run:
 	mkdir -p ./data
 	go run ./cmd/api -conf ./configs
 
+.PHONY: test
+# run all unit + integration tests (skips ent-generated packages)
+test:
+	go test $$(go list ./... | grep -v '/internal/data/ent') -count=1
+
+.PHONY: test-v
+# run tests with verbose output
+test-v:
+	go test $$(go list ./... | grep -v '/internal/data/ent') -count=1 -v
+
 .PHONY: all
 # generate all
 all:

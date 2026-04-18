@@ -1,7 +1,6 @@
 package server
 
 import (
-	v1 "api/api/helloworld/v1"
 	"api/internal/conf"
 	"api/internal/service"
 
@@ -15,22 +14,24 @@ import (
 	"github.com/go-kratos/kratos/v2/transport/http"
 )
 
-// NewHTTPServer wires a Kratos HTTP server with kratoscarf conventions:
-//   - ErrorEncoder: all errors emit the {code, message, data} envelope
-//   - CORS + Secure headers as HTTP filters
-//   - RequestID + Recovery as Kratos middleware
-//   - Router group with auto-validate + auto-wrap for ctx.Success
+// NewHTTPServer wires a Kratos HTTP server that exposes the Dockery API
+// through kratoscarf's router. All routes go through:
 //
-// ResponseEncoder is intentionally NOT overridden, so proto-generated
-// greeter handlers keep their native JSON shape; only kratoscarf
-// ctx.Success() calls go through response.Wrap.
-func NewHTTPServer(
-	c *conf.Server,
-	greeter *service.GreeterService,
-	system *service.SystemService,
-	logger log.Logger,
-) *http.Server {
+//   - Filter: CORS + Secure headers (HTTP-level)
+//   - Middleware: Recovery + RequestID (Kratos-level)
+//   - ErrorEncoder: kratoscarf {code,message,data} envelope
+//   - Validator: auto-validates on ctx.Bind / ctx.BindQuery
+//   - Response wrapper: ctx.Success wraps payloads in the envelope
+//
+// Routes are grouped by authentication requirement; the /token endpoint
+// bypasses the envelope (Docker spec requires its own JSON shape) by
+// writing via ctx.JSON directly.
+func NewHTTPServer(c *conf.Server, svcs *service.Services, logger log.Logger) *http.Server {
 	opts := []http.ServerOption{
+		// Route HTTP transport logs (e.g. "server listening on …")
+		// through the injected logger; tests can feed io.Discard to
+		// stay quiet, production keeps them on stdout.
+		http.Logger(logger),
 		http.ErrorEncoder(response.NewHTTPErrorEncoder()),
 		http.Filter(
 			middleware.CORS(),
@@ -53,15 +54,11 @@ func NewHTTPServer(
 
 	srv := http.NewServer(opts...)
 
-	// Proto-generated routes (greeter demo; replaced in M2).
-	v1.RegisterGreeterHTTPServer(srv, greeter)
-
-	// Kratoscarf-managed routes: health, ping, and (in M2) business APIs.
 	r := router.NewRouter(srv,
 		router.WithValidator(validation.New()),
 		router.WithResponseWrapper(response.Wrap),
 	)
-	system.Register(r)
 
+	registerRoutes(r, svcs)
 	return srv
 }
