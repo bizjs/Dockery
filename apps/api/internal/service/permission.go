@@ -1,7 +1,7 @@
 package service
 
 import (
-	"api/internal/data"
+	"api/internal/biz"
 
 	"github.com/bizjs/kratoscarf/router"
 )
@@ -10,10 +10,13 @@ import (
 // Admins bypass this table entirely; attempting to grant a permission
 // to an admin is an error.
 type PermissionService struct {
-	data *data.Data
+	perms *biz.PermissionUsecase
+	users *biz.UserUsecase
 }
 
-func NewPermissionService(d *data.Data) *PermissionService { return &PermissionService{data: d} }
+func NewPermissionService(perms *biz.PermissionUsecase, users *biz.UserUsecase) *PermissionService {
+	return &PermissionService{perms: perms, users: users}
+}
 
 // --- DTOs ---
 

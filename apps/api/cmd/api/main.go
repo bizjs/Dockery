@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"os"
+	"time"
 
+	"api/internal/biz"
 	"api/internal/conf"
 
 	"github.com/go-kratos/kratos/v2"
@@ -18,11 +22,8 @@ import (
 
 // go build -ldflags "-X main.Version=x.y.z"
 var (
-	// Name is the name of the compiled software.
-	Name string
-	// Version is the version of the compiled software.
-	Version string
-	// flagconf is the config flag.
+	Name     string
+	Version  string
 	flagconf string
 
 	id, _ = os.Hostname()
@@ -30,9 +31,37 @@ var (
 
 func init() {
 	flag.StringVar(&flagconf, "conf", "../../configs", "config path, eg: -conf config.yaml")
+	if Name == "" {
+		Name = "dockery-api"
+	}
 }
 
-func newApp(logger log.Logger, hs *http.Server) *kratos.App {
+// newApp wires the kratos.App and performs first-boot admin bootstrap.
+// The EnsureAdmin call here is intentional: if the users table is empty
+// and no admin password is available, the process refuses to start.
+// This is the only "side-effectful" provider in the wire graph; any
+// other boot-time work belongs here.
+func newApp(logger log.Logger, hs *http.Server, users *biz.UserUsecase, dockery *conf.Dockery) *kratos.App {
+	adminUser := dockery.Admin.Username
+	adminPass := dockery.Admin.Password
+	// env takes precedence over yaml so users can bootstrap without committing secrets.
+	if v := os.Getenv("DOCKERY_ADMIN_USERNAME"); v != "" {
+		adminUser = v
+	}
+	if v := os.Getenv("DOCKERY_ADMIN_PASSWORD"); v != "" {
+		adminPass = v
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := users.EnsureAdmin(ctx, adminUser, adminPass); err != nil {
+		if errors.Is(err, biz.ErrAdminPasswordUnset) {
+			log.NewHelper(logger).Fatalf(
+				"users table is empty and DOCKERY_ADMIN_PASSWORD is not set; " +
+					"set the env (or dockery.admin.password in config) and retry")
+		}
+		log.NewHelper(logger).Fatalf("ensure admin: %v", err)
+	}
+
 	return kratos.New(
 		kratos.ID(id),
 		kratos.Name(Name),
@@ -45,6 +74,7 @@ func newApp(logger log.Logger, hs *http.Server) *kratos.App {
 
 func main() {
 	flag.Parse()
+
 	logger := log.With(log.NewStdLogger(os.Stdout),
 		"ts", log.DefaultTimestamp,
 		"caller", log.DefaultCaller,
@@ -54,13 +84,9 @@ func main() {
 		"trace.id", tracing.TraceID(),
 		"span.id", tracing.SpanID(),
 	)
-	c := config.New(
-		config.WithSource(
-			file.NewSource(flagconf),
-		),
-	)
-	defer c.Close()
 
+	c := config.New(config.WithSource(file.NewSource(flagconf)))
+	defer c.Close()
 	if err := c.Load(); err != nil {
 		panic(err)
 	}
@@ -69,14 +95,26 @@ func main() {
 	if err := c.Scan(&bc); err != nil {
 		panic(err)
 	}
+	var dockeryConf conf.Dockery
+	if err := c.Value("dockery").Scan(&dockeryConf); err != nil {
+		// Missing dockery section is a hard error — Dockery cannot run
+		// without keystore/token config.
+		panic("config missing 'dockery' section: " + err.Error())
+	}
 
-	app, cleanup, err := wireApp(bc.Server, bc.Data, logger)
+	// Subcommand dispatch. `dockery-api [-conf …] user <verb> [args...]`.
+	// Subcommands boot the biz layer but never start the HTTP server.
+	args := flag.Args()
+	if len(args) > 0 && args[0] == "user" {
+		os.Exit(runUserCommand(args[1:], bc.Data, logger))
+	}
+
+	app, cleanup, err := wireApp(bc.Server, bc.Data, &dockeryConf, logger)
 	if err != nil {
 		panic(err)
 	}
 	defer cleanup()
 
-	// start and wait for stop signal
 	if err := app.Run(); err != nil {
 		panic(err)
 	}

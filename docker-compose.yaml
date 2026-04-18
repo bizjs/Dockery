@@ -1,38 +1,27 @@
+# Dockery — all-in-one deployment.
+#
+#   docker compose up --build -d
+#   open http://localhost:5000
+#
+# Docker CLI push/pull goes through the same port:
+#   docker tag hello-world localhost:5000/demo/hello:1
+#   docker push localhost:5000/demo/hello:1
+#
+# (Add "localhost:5000" to Docker Desktop's insecure-registries until
+#  TLS termination lands in M4.)
 services:
-  # Docker Registry
-  registry:
-    image: distribution/distribution:3.0.0
-    container_name: light-registry
-    restart: unless-stopped
-    environment:
-      REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /var/lib/registry
-      REGISTRY_STORAGE_DELETE_ENABLED: 'true'
-    volumes:
-      - registry-data:/var/lib/registry
-    networks:
-      - registry-network
-
-  # Web UI
-  web-ui:
+  dockery:
     build:
-      context: ./web-ui
-      dockerfile: Dockerfile
-    container_name: light-registry-ui
+      context: .
+      dockerfile: docker/Dockerfile
+    image: dockery:dev
+    container_name: dockery
     restart: unless-stopped
     ports:
-      - "3000:80"
-    environment:
-      - REGISTRY_URL=http://registry:5000
-    depends_on:
-      - registry
-    networks:
-      - registry-network
+      - "5000:5000"
+    volumes:
+      - dockery-data:/data
 
 volumes:
-  registry-data:
+  dockery-data:
     driver: local
-
-networks:
-  registry-network:
-    name: light-registry-net
-    driver: bridge

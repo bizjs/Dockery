@@ -552,11 +552,11 @@ ports:
 - **M1.1** ✅ 项目重组（`apps/api` 由 `kratos new` 生成、`apps/web-ui` 待迁入；pnpm workspace 待建）
 - **M1.2** ✅ kratoscarf 集成（ErrorEncoder / CORS / Secure / RequestID / Router / Validator / ResponseWrapper；集成测试覆盖全部路由）
 - **M1.3** ⏭️ proto 生成跳过 —— 改用 kratoscarf 直接声明路由；OpenAPI 将在 M3 从现有 DTO 结构生成
-- **M1.4** ⬜ 容器化（Dockerfile 多阶段 / nginx / s6-overlay / compose）
+- **M1.4** ✅ 容器化 —— Dockerfile 多阶段 + nginx + s6-overlay + compose 生产/开发双份；已验证 `docker push/pull` 与 `/v2/_catalog` 联通
 - **M2.1** ✅（前置完成）ent schema + SQLite 集成 + auto-migrate
-- **M2.2** ⏳ 密钥 + Token 签发 + Scope 匹配 —— 现在推进
-- **M2.3** ⬜ 用户初始化 + CLI 管理命令 + `/token` handler 实装
-- **M2.4** ⬜ Registry 切 token auth，docker login 端到端验证
+- **M2.2** ✅ 密钥 (Ed25519) + Token 签发 (JWT/EdDSA) + Scope 匹配（role→actions） —— 全层单测覆盖
+- **M2.3** ✅ 用户初始化 (EnsureAdmin + bcrypt) + CLI 管理命令 (`user list/create/passwd/grant/revoke/delete`) + `/token` handler 真实签发 JWT + `/api/auth/login` 真实验证
+- **M2.4** ⏳ Registry 切 token auth（`auth.token` 段启用、`rootcertbundle` 指 `/data/config/jwt-public.pem`、`REGISTRY_AUTH_TOKEN_REALM` 由 env 覆盖） —— 等你跑一次 docker login 端到端验证
 - **M3**   ⬜ UI 接入与权限化
 - **M4**   ⬜ 打磨与发布
 

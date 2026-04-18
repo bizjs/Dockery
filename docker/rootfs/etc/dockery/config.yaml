@@ -1,0 +1,28 @@
+# dockery-api config — consumed by `-conf /etc/dockery` on container start.
+# This file is the in-container counterpart of apps/api/configs/config.yaml
+# (which stays pointed at developer-friendly ports for `make run`).
+server:
+  http:
+    # Internal only; nginx fronts us on 5000.
+    addr: 127.0.0.1:3001
+    timeout: 5s
+data:
+  database:
+    driver: sqlite
+    source: file:/data/db/dockery.db?cache=shared&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)
+  # Redis section retained for conf-proto schema compatibility only.
+  redis:
+    addr: ""
+dockery:
+  keystore:
+    private_path: /data/config/jwt-private.pem
+    public_path:  /data/config/jwt-public.pem
+  token:
+    issuer: dockery-api
+    audience: dockery
+    ttl_seconds: 300
+    public_url: ""       # leave empty; nginx forwards the request host
+  admin:
+    username: admin
+    # MUST be provided via env DOCKERY_ADMIN_PASSWORD on first container boot.
+    password: ""

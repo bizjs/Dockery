@@ -2,6 +2,13 @@ package biz
 
 import "github.com/google/wire"
 
-// ProviderSet is the biz layer provider set.
-// Populated in M2 as usecases are introduced (user, permission, token, keystore, maintenance).
-var ProviderSet = wire.NewSet()
+// ProviderSet wires all biz-layer constructors so cmd/api/wire.go can
+// grab them with a single reference.
+var ProviderSet = wire.NewSet(
+	NewKeystoreConfigFromConf,
+	NewKeystore,
+	NewTokenIssuerConfigFromConf,
+	NewTokenIssuer,
+	NewUserUsecase,
+	NewPermissionUsecase,
+)

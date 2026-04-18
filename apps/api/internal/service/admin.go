@@ -1,18 +1,16 @@
 package service
 
 import (
-	"api/internal/data"
-
 	"github.com/bizjs/kratoscarf/router"
 )
 
 // AdminService hosts endpoints that only an admin should reach:
 // maintenance operations and audit log queries.
-type AdminService struct {
-	data *data.Data
-}
+//
+// M4 will inject the biz usecases (token rotation, GC, audit).
+type AdminService struct{}
 
-func NewAdminService(d *data.Data) *AdminService { return &AdminService{data: d} }
+func NewAdminService() *AdminService { return &AdminService{} }
 
 // --- DTOs ---
 

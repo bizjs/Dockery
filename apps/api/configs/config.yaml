@@ -13,3 +13,17 @@ data:
     addr: 127.0.0.1:6379
     read_timeout: 0.2s
     write_timeout: 0.2s
+dockery:
+  keystore:
+    private_path: ./data/jwt-private.pem
+    public_path:  ./data/jwt-public.pem
+  token:
+    issuer: dockery-api
+    audience: dockery
+    ttl_seconds: 300
+    public_url: http://localhost:5001
+  admin:
+    username: admin
+    # First-launch password. Prefer DOCKERY_ADMIN_PASSWORD env var;
+    # this yaml value is accepted for easier local dev.
+    password: ""

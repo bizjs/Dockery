@@ -1,7 +1,7 @@
 package service
 
 import (
-	"api/internal/data"
+	"api/internal/biz"
 
 	"github.com/bizjs/kratoscarf/router"
 )
@@ -10,10 +10,13 @@ import (
 // Role is one of admin | write | view; actions on repositories are
 // entirely driven by the role, not stored per-row.
 type UserService struct {
-	data *data.Data
+	users *biz.UserUsecase
+	perms *biz.PermissionUsecase
 }
 
-func NewUserService(d *data.Data) *UserService { return &UserService{data: d} }
+func NewUserService(users *biz.UserUsecase, perms *biz.PermissionUsecase) *UserService {
+	return &UserService{users: users, perms: perms}
+}
 
 // --- DTOs ---
 

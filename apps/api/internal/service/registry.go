@@ -1,8 +1,6 @@
 package service
 
 import (
-	"api/internal/data"
-
 	"github.com/bizjs/kratoscarf/router"
 )
 
@@ -15,11 +13,11 @@ import (
 //     injects it as "Authorization: Bearer" on the upstream call.
 //   - The response is forwarded to the UI; lists (catalog/tags) are
 //     additionally filtered so users never see repos they cannot access.
-type RegistryService struct {
-	data *data.Data
-}
+//
+// M3 will inject the biz usecases once the proxy is actually implemented.
+type RegistryService struct{}
 
-func NewRegistryService(d *data.Data) *RegistryService { return &RegistryService{data: d} }
+func NewRegistryService() *RegistryService { return &RegistryService{} }
 
 // --- DTOs ---
 

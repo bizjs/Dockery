@@ -7,10 +7,12 @@
 package main
 
 import (
+	"api/internal/biz"
 	"api/internal/conf"
 	"api/internal/data"
 	"api/internal/server"
 	"api/internal/service"
+
 	"github.com/go-kratos/kratos/v2"
 	"github.com/go-kratos/kratos/v2/log"
 )
@@ -22,21 +24,36 @@ import (
 // Injectors from wire.go:
 
 // wireApp init kratos application.
-//
-// biz.ProviderSet is intentionally omitted until M2 populates it with
-// usecases; wire rejects empty provider sets as "unused".
-func wireApp(confServer *conf.Server, confData *conf.Data, logger log.Logger) (*kratos.App, func(), error) {
-	systemService := service.NewSystemService()
+func wireApp(confServer *conf.Server, confData *conf.Data, dockery *conf.Dockery, logger log.Logger) (*kratos.App, func(), error) {
 	dataData, cleanup, err := data.NewData(confData, logger)
 	if err != nil {
 		return nil, nil, err
 	}
-	authService := service.NewAuthService(dataData)
-	userService := service.NewUserService(dataData)
-	permissionService := service.NewPermissionService(dataData)
-	registryService := service.NewRegistryService(dataData)
-	tokenService := service.NewTokenService(dataData)
-	adminService := service.NewAdminService(dataData)
+	userRepo := data.NewUserRepo(dataData, logger)
+	permissionRepo := data.NewPermissionRepo(dataData, logger)
+	userUsecase := biz.NewUserUsecase(userRepo)
+	permissionUsecase := biz.NewPermissionUsecase(permissionRepo, userRepo)
+
+	keystoreCfg := biz.NewKeystoreConfigFromConf(dockery)
+	keystore, err := biz.NewKeystore(keystoreCfg)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	tokenIssuerCfg := biz.NewTokenIssuerConfigFromConf(dockery)
+	tokenIssuer, err := biz.NewTokenIssuer(keystore, tokenIssuerCfg)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+
+	systemService := service.NewSystemService()
+	authService := service.NewAuthService(userUsecase)
+	userService := service.NewUserService(userUsecase, permissionUsecase)
+	permissionService := service.NewPermissionService(permissionUsecase, userUsecase)
+	registryService := service.NewRegistryService()
+	tokenService := service.NewTokenService(userUsecase, permissionUsecase, tokenIssuer)
+	adminService := service.NewAdminService()
 	services := &service.Services{
 		System:     systemService,
 		Auth:       authService,
@@ -47,7 +64,7 @@ func wireApp(confServer *conf.Server, confData *conf.Data, logger log.Logger) (*
 		Admin:      adminService,
 	}
 	httpServer := server.NewHTTPServer(confServer, services, logger)
-	app := newApp(logger, httpServer)
+	app := newApp(logger, httpServer, userUsecase, dockery)
 	return app, func() {
 		cleanup()
 	}, nil

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"api/internal/biz"
 	"api/internal/conf"
 	"api/internal/data"
 	"api/internal/server"
@@ -51,14 +52,35 @@ func newHarness(t *testing.T) *harness {
 		t.Fatalf("data.NewData: %v", err)
 	}
 
+	// Build the full biz chain. Keystore lives under the test's
+	// TempDir so every test gets a fresh Ed25519 pair.
+	keyDir := filepath.Join(t.TempDir(), "keys")
+	ks, err := biz.NewKeystore(biz.KeystoreConfig{
+		PrivatePath: filepath.Join(keyDir, "priv.pem"),
+		PublicPath:  filepath.Join(keyDir, "pub.pem"),
+	})
+	if err != nil {
+		t.Fatalf("keystore: %v", err)
+	}
+	iss, err := biz.NewTokenIssuer(ks, biz.TokenIssuerConfig{
+		Issuer: "dockery-api", Audience: "dockery", TTL: 5 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("token issuer: %v", err)
+	}
+	userRepo := data.NewUserRepo(d, logger)
+	permRepo := data.NewPermissionRepo(d, logger)
+	userUC := biz.NewUserUsecase(userRepo)
+	permUC := biz.NewPermissionUsecase(permRepo, userRepo)
+
 	svcs := &service.Services{
 		System:     service.NewSystemService(),
-		Auth:       service.NewAuthService(d),
-		User:       service.NewUserService(d),
-		Permission: service.NewPermissionService(d),
-		Registry:   service.NewRegistryService(d),
-		Token:      service.NewTokenService(d),
-		Admin:      service.NewAdminService(d),
+		Auth:       service.NewAuthService(userUC),
+		User:       service.NewUserService(userUC, permUC),
+		Permission: service.NewPermissionService(permUC, userUC),
+		Registry:   service.NewRegistryService(),
+		Token:      service.NewTokenService(userUC, permUC, iss),
+		Admin:      service.NewAdminService(),
 	}
 
 	// We still build a kratos http.Server for its option chain
@@ -236,7 +258,7 @@ func TestCORSPreflight(t *testing.T) {
 //   - route is reachable (no 404)
 //   - validation runs (empty body → 422)
 //   - with a valid body, handler stub returns 501 (M2 will replace)
-func TestAuthLogin_ValidationAndStub(t *testing.T) {
+func TestAuthLogin_ValidationAndUnknownUser(t *testing.T) {
 	h := newHarness(t)
 	defer h.stop()
 
@@ -246,27 +268,42 @@ func TestAuthLogin_ValidationAndStub(t *testing.T) {
 		t.Fatalf("empty body want 422, got %d", resp.StatusCode)
 	}
 
-	// valid body → 501 (stub)
+	// valid body but no such user → 401 (credential verification now live).
 	resp, raw := h.do(http.MethodPost, "/api/auth/login", map[string]string{
-		"username": "alice",
+		"username": "nobody",
 		"password": "password1234",
 	})
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("valid body want 501, got %d; body=%s", resp.StatusCode, raw)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("valid body want 401, got %d; body=%s", resp.StatusCode, raw)
 	}
 	env := h.decode(raw)
-	if env.Code != 50100 {
-		t.Fatalf("want business code 50100, got %+v", env)
+	if env.Code != 40101 {
+		t.Fatalf("want business code 40101, got %+v", env)
 	}
 }
 
-func TestTokenEndpoint_Stub(t *testing.T) {
+// TestTokenEndpoint_AnonymousHandshake exercises the /token probe request
+// that docker CLI issues before it knows whether credentials are needed.
+// With no Authorization header, Dockery returns a valid empty-access JWT
+// so `docker login` succeeds, then the subsequent push/pull triggers a
+// real credentialed /token hit.
+func TestTokenEndpoint_AnonymousHandshake(t *testing.T) {
 	h := newHarness(t)
 	defer h.stop()
 
-	resp, _ := h.do(http.MethodGet, "/token", nil)
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("want 501, got %d", resp.StatusCode)
+	resp, raw := h.do(http.MethodGet, "/token", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200 anon token, got %d; body=%s", resp.StatusCode, raw)
+	}
+	var tok struct {
+		Token     string `json:"token"`
+		ExpiresIn int    `json:"expires_in"`
+	}
+	if err := json.Unmarshal(raw, &tok); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if tok.Token == "" || tok.ExpiresIn <= 0 {
+		t.Fatalf("malformed token response: %+v", tok)
 	}
 }
 
@@ -288,7 +325,9 @@ func TestRouteMatrix(t *testing.T) {
 		// Public
 		{http.MethodGet, "/healthz", nil, 200},
 		{http.MethodGet, "/readyz", nil, 200},
-		{http.MethodGet, "/token", nil, 501},
+		// /token is now implemented; probe without credentials returns an
+		// anonymous-access JWT (200). See TestTokenEndpoint_AnonymousHandshake.
+		{http.MethodGet, "/token", nil, 200},
 		// Session stubs pass through in M1
 		{http.MethodPost, "/api/auth/logout", nil, 501},
 		{http.MethodGet, "/api/auth/me", nil, 501},

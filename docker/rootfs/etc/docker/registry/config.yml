@@ -1,0 +1,55 @@
+# Distribution Registry config — Dockery edition.
+#
+# Auth is delegated to Dockery's token server at /token. The registry
+# verifies incoming JWTs against /data/config/jwt-public.pem (the
+# Ed25519 public key written by dockery-api at first boot).
+#
+# Realm MUST be a URL the docker CLI can actually reach from its host,
+# so we expose it as a field that's overridden at runtime via the
+# REGISTRY_AUTH_TOKEN_REALM environment variable (see compose). The
+# default below is only a sane fallback for local dev.
+version: 0.1
+
+log:
+  level: info
+  formatter: text
+
+storage:
+  filesystem:
+    rootdirectory: /data/registry
+  delete:
+    enabled: true
+  cache:
+    blobdescriptor: inmemory
+  maintenance:
+    uploadpurging:
+      enabled: true
+      age: 168h
+      interval: 24h
+      dryrun: false
+
+http:
+  addr: 127.0.0.1:5001
+  # M4: rotate by overwriting /data/config/registry-secret and restarting.
+  # Kept as a placeholder for now; dockery-api writes the real value on
+  # first start.
+  secret: dockery-registry-secret-placeholder
+  headers:
+    X-Content-Type-Options: [nosniff]
+  debug:
+    addr: 127.0.0.1:5002
+    prometheus:
+      enabled: true
+      path: /metrics
+
+auth:
+  token:
+    # Overridden at runtime by REGISTRY_AUTH_TOKEN_REALM from the env —
+    # compose / docker run must set it to whatever URL the docker CLI
+    # will see (e.g. https://registry.example.com/token in prod).
+    realm: http://localhost:5000/token
+    service: dockery
+    issuer: dockery-api
+    rootcertbundle: /data/config/jwt-public.pem
+    signingalgorithms:
+      - EdDSA
