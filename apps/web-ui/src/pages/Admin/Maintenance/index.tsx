@@ -63,17 +63,36 @@ export default function MaintenancePage() {
             </div>
           </div>
 
-          {s.error && (
+          {s.error && !s.lastResult && (
             <div className="rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
               {s.error}
             </div>
           )}
 
           {s.lastResult && !s.running && (
-            <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm">
-              <p className="font-medium text-emerald-700 dark:text-emerald-400">
-                Completed in {formatDuration(s.lastResult.duration_ms)}.
+            <div
+              className={`rounded-md border px-4 py-3 text-sm ${
+                s.lastResult.success
+                  ? 'border-emerald-500/40 bg-emerald-500/10'
+                  : 'border-destructive/50 bg-destructive/10'
+              }`}
+            >
+              <p
+                className={`font-medium ${
+                  s.lastResult.success
+                    ? 'text-emerald-700 dark:text-emerald-400'
+                    : 'text-destructive'
+                }`}
+              >
+                {s.lastResult.success
+                  ? `Completed in ${formatDuration(s.lastResult.duration_ms)}.`
+                  : `Failed after ${formatDuration(s.lastResult.duration_ms)}.`}
               </p>
+              {s.lastResult.error && (
+                <p className="mt-1 text-xs text-destructive font-mono break-all">
+                  {s.lastResult.error}
+                </p>
+              )}
               {s.lastResult.output_tail && (
                 <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-muted px-3 py-2 text-xs font-mono text-foreground">
                   {s.lastResult.output_tail}

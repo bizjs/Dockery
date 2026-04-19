@@ -77,16 +77,20 @@ interface ConfigBlob {
 
 /** List repositories visible to the current session user. */
 export async function listRepositories(): Promise<{ repo: string; tags: string[] }[]> {
-  const { repositories = [] } = await api.get<CatalogResponse>('/api/registry/catalog');
-  // Fetch tags for each repo in parallel; UI wants tagCount on the
-  // catalog card anyway.
+  // ?? (not destructure default) because the upstream distribution
+  // registry returns {"repositories": null} / {"tags": null} when the
+  // set is empty — e.g. after deleting the last tag of a repo. A
+  // destructure default only covers `undefined`, so tags would stay
+  // null and crash at .length / .map downstream.
+  const response = await api.get<CatalogResponse>('/api/registry/catalog');
+  const repositories = response.repositories ?? [];
   const results = await Promise.all(
     repositories.map(async (repo) => {
       try {
-        const { tags = [] } = await api.get<TagsResponse>(
+        const tagsResp = await api.get<TagsResponse>(
           `/api/registry/${encodeURIComponent(repo)}/tags`,
         );
-        return { repo, tags };
+        return { repo, tags: tagsResp.tags ?? [] };
       } catch {
         return { repo, tags: [] };
       }
@@ -130,7 +134,9 @@ export async function getImageInfo(repository: string, tag: string): Promise<Ima
         exposedPorts = Object.keys(cfg.config.ExposedPorts);
       }
 
-      if (cfg.history && manifest.layers) {
+      // cfg.history and manifest.layers can legitimately be null in
+      // minimal manifests — guard before .map / .length.
+      if (Array.isArray(cfg.history) && Array.isArray(manifest.layers)) {
         let li = 0;
         history = cfg.history.map((h) => {
           const entry: NonNullable<ImageInfo['history']>[number] = {
@@ -180,9 +186,10 @@ export async function getImageInfo(repository: string, tag: string): Promise<Ima
 
 /** Fetch every tag's ImageInfo for a repo. */
 export async function listImageTags(imageName: string): Promise<ImageInfo[]> {
-  const { tags = [] } = await api.get<TagsResponse>(
+  const resp = await api.get<TagsResponse>(
     `/api/registry/${encodeURIComponent(imageName)}/tags`,
   );
+  const tags = resp.tags ?? [];
   const infos = await Promise.all(
     tags.map(async (tag) => {
       try {

@@ -1,10 +1,13 @@
 import { api } from './api';
 
-/** Response shape returned by POST /api/admin/gc. */
+/** Response shape returned by POST /api/admin/gc.
+ *  success=false means the stop/gc/restart sequence failed somewhere;
+ *  error holds a short reason, output_tail the command output. */
 export interface GCResult {
-  started: boolean;
+  success: boolean;
   duration_ms: number;
-  /** Last ~20 lines of `registry garbage-collect` output. Empty for no-op runs. */
+  error?: string;
+  /** Last ~40 lines of supervisorctl / `registry garbage-collect` output. */
   output_tail?: string;
 }
 

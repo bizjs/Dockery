@@ -24,14 +24,16 @@ func NewAdminService(audit *biz.AuditUsecase, gc *biz.GCRunner) *AdminService {
 
 // --- DTOs ---
 
-// GCResponse describes one GC run. Output is the tail of the registry
-// garbage-collect stdout+stderr so operators can verify what happened
-// without tailing container logs. Truncated client-side for the audit
-// row; full payload stays in the response.
+// GCResponse describes one GC run. Success=false means the run was
+// attempted but something in the stop / gc / restart sequence failed;
+// Error holds a short human-readable summary and OutputTail carries
+// whatever supervisorctl / registry printed so operators can diagnose
+// without shelling into the container.
 type GCResponse struct {
-	Started      bool   `json:"started"`
-	DurationMs   int64  `json:"duration_ms"`
-	OutputTail   string `json:"output_tail,omitempty"`
+	Success    bool   `json:"success"`
+	DurationMs int64  `json:"duration_ms"`
+	Error      string `json:"error,omitempty"`
+	OutputTail string `json:"output_tail,omitempty"`
 }
 
 type RotateKeyResponse struct {
@@ -72,6 +74,13 @@ type AuditQuery struct {
 // blocks for the whole cycle (stop → gc → restart); operators should
 // expect seconds-to-minutes depending on registry size.
 //
+// GC failures (supervisorctl missing, registry binary error, etc.) are
+// surfaced as 200 with success=false + error + output_tail rather than
+// a bare 500 — the underlying command output is the only useful
+// diagnostic, and dropping it behind kratoscarf's generic
+// "internal server error" frustrated the operator case this endpoint
+// exists to serve.
+//
 // See biz/gc.go for the orchestration details.
 func (s *AdminService) TriggerGC(ctx *router.Context) error {
 	result, err := s.gc.Run(ctx.Context(), sessionUsername(ctx), ctx.ClientIP())
@@ -79,12 +88,20 @@ func (s *AdminService) TriggerGC(ctx *router.Context) error {
 		if errors.Is(err, biz.ErrGCAlreadyRunning) {
 			return response.NewBizError(http.StatusConflict, 40901, "gc already in progress")
 		}
-		return response.ErrInternal.WithCause(err)
+		resp := GCResponse{
+			Success: false,
+			Error:   err.Error(),
+		}
+		if result != nil {
+			resp.DurationMs = result.Duration.Milliseconds()
+			resp.OutputTail = tailLines(result.Output, 40)
+		}
+		return ctx.Success(resp)
 	}
 	return ctx.Success(GCResponse{
-		Started:    true,
+		Success:    true,
 		DurationMs: result.Duration.Milliseconds(),
-		OutputTail: tailLines(result.Output, 20),
+		OutputTail: tailLines(result.Output, 40),
 	})
 }
 
