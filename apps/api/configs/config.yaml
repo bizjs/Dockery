@@ -1,0 +1,33 @@
+server:
+  http:
+    addr: 0.0.0.0:5001
+    timeout: 5s
+data:
+  database:
+    driver: sqlite
+    # modernc.org/sqlite uses the "sqlite" driver name.
+    # file: prefix + SQLite pragmas via URI query; foreign keys enabled.
+    source: file:./data/dockery.db?cache=shared&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)
+  # Redis is declared for conf-schema compatibility; Dockery does not use it yet.
+  redis:
+    addr: 127.0.0.1:6379
+    read_timeout: 0.2s
+    write_timeout: 0.2s
+dockery:
+  keystore:
+    private_path: ./data/jwt-private.pem
+    jwks_path:    ./data/jwt-jwks.json
+  token:
+    issuer: dockery-api
+    audience: dockery
+    ttl_seconds: 300
+    public_url: http://localhost:5001
+  admin:
+    username: admin
+    # First-launch password. Prefer DOCKERY_ADMIN_PASSWORD env var;
+    # this yaml value is accepted for easier local dev.
+    password: ""
+  session:
+    ttl_hours: 168
+    cookie_name: dockery_session
+    cookie_secure: false     # set true behind HTTPS in production

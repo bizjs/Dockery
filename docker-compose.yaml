@@ -1,38 +1,41 @@
+# Dockery — all-in-one deployment.
+#
+# Dockery binds host port 5001 (container's 5000). Picking 5001 instead
+# of the "natural" 5000 avoids a conflict with macOS's AirPlay Receiver
+# service, which silently listens on 5000 by default.
+#
+#   docker compose up --build -d
+#   open http://localhost:5001
+#
+# Docker CLI push/pull goes through the same port:
+#   docker tag hello-world localhost:5001/demo/hello:1
+#   docker push localhost:5001/demo/hello:1
+#
+# (Add "localhost:5001" to Docker Desktop's insecure-registries until
+#  TLS termination lands in M4.)
 services:
-  # Docker Registry
-  registry:
-    image: distribution/distribution:3.0.0
-    container_name: light-registry
-    restart: unless-stopped
-    environment:
-      REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /var/lib/registry
-      REGISTRY_STORAGE_DELETE_ENABLED: 'true'
-    volumes:
-      - registry-data:/var/lib/registry
-    networks:
-      - registry-network
-
-  # Web UI
-  web-ui:
+  dockery:
     build:
-      context: ./web-ui
-      dockerfile: Dockerfile
-    container_name: light-registry-ui
+      context: .
+      dockerfile: docker/Dockerfile
+    image: dockery:dev
+    container_name: dockery
     restart: unless-stopped
     ports:
-      - "3000:80"
+      - 5001:5000
     environment:
-      - REGISTRY_URL=http://registry:5000
-    depends_on:
-      - registry
-    networks:
-      - registry-network
+      # First admin gets created on first boot from this env. Leave the
+      # yaml default empty after provisioning (or change via
+      # `dockery-api user passwd`); rely on a shell env var for secrets.
+      DOCKERY_ADMIN_USERNAME: admin
+      DOCKERY_ADMIN_PASSWORD: '${DOCKERY_ADMIN_PASSWORD:-changeme-on-first-boot}'
+      # Realm URL docker CLI receives in WWW-Authenticate. Must be the
+      # exact host:port the CLI will actually hit. Override for public
+      # deploys, e.g.  REGISTRY_AUTH_TOKEN_REALM=https://registry.example.com/token
+      REGISTRY_AUTH_TOKEN_REALM: '${REGISTRY_AUTH_TOKEN_REALM:-http://localhost:5001/token}'
+    volumes:
+      - dockery-data:/data
 
 volumes:
-  registry-data:
+  dockery-data:
     driver: local
-
-networks:
-  registry-network:
-    name: light-registry-net
-    driver: bridge

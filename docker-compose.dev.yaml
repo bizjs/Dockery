@@ -1,0 +1,36 @@
+# Dev-mode support stack.
+#
+# Runs just the distribution registry on host :5000 — no auth, delete
+# enabled — so you can iterate on the UI (`pnpm -C apps/web-ui dev`) and
+# the API (`cd apps/api && make run`) on bare metal while still having
+# something on /v2/ for the Vite proxy and dockery-api to talk to.
+#
+# Auth-less registry is intentional: in dev, dockery-api still mints
+# Bearer tokens for its proxy calls, but distribution without an `auth:`
+# block accepts every request regardless of the Authorization header.
+# This lets you test the UI→API→registry chain without managing JWKS in
+# two places.
+#
+#   docker compose -f docker-compose.dev.yaml up -d
+#   cd apps/api && make run          # :5001
+#   pnpm -C apps/web-ui dev          # :5173, proxies /v2→:5000 /api→:5001
+#
+# Data is persisted in a named volume — independent of the prod
+# `dockery-data` volume so production state can't be stomped on
+# accidentally.
+services:
+  registry:
+    image: distribution/distribution:3.1.0
+    container_name: dockery-dev-registry
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+      REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /var/lib/registry
+    volumes:
+      - dockery-dev-registry:/var/lib/registry
+
+volumes:
+  dockery-dev-registry:
+    driver: local
