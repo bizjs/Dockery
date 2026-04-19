@@ -1,6 +1,6 @@
-# Light Registry
+# Dockery
 
-`Light Registry` 是一个轻量级的 Docker Registry 解决方案，结合了 Docker Distribution、可插拔的认证服务和现代化的 Web UI —— 没有 Harbor 的复杂性。
+`Dockery` 是一个轻量级的 Docker Registry 解决方案，结合了 Docker Distribution、可插拔的认证服务和现代化的 Web UI —— 没有 Harbor 的复杂性。
 
 [English Documentation](./README.md)
 
@@ -159,7 +159,7 @@ nginx 配置使用模板和环境变量替换：
 ### UI 无法连接到 Registry
 
 1. 检查服务是否运行：`docker-compose ps`
-2. 检查网络连接：`docker network inspect light-registry-net`
+2. 检查网络连接：`docker network inspect dockery-net`
 3. 查看 UI 日志：`docker-compose logs web-ui`
 4. 查看 Registry 日志：`docker-compose logs registry`
 

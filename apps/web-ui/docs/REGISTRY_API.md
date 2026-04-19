@@ -14,7 +14,7 @@
 ## API 端点列表
 
 > **图例说明**:
-> - 🔵 **UI 必需**: Light Registry 必须使用的核心接口
+> - 🔵 **UI 必需**: Dockery 必须使用的核心接口
 > - 🟢 **UI 可选**: UI 可以使用但非必需的接口
 > - ⚪ **UI 不用**: UI 通常不需要使用的接口（主要用于镜像推送）
 
@@ -421,7 +421,7 @@ curl http://localhost:4999/v2/distribution/blobs/sha256:abc123...
 
 ---
 
-## Light Registry 使用的接口总结
+## Dockery 使用的接口总结
 
 ### 必需接口 (🔵)
 

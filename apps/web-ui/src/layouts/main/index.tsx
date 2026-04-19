@@ -19,7 +19,7 @@ interface MainLayoutProps {
  * Main Layout Component
  */
 export function MainLayout({
-  title = 'Light Registry',
+  title = 'Dockery',
   registryUrl,
   version = '0.0.0',
   showLinks = true,
@@ -67,7 +67,7 @@ export function MainLayout({
             {showLinks && (
               <div className="flex items-center gap-6">
                 <a
-                  href="https://github.com/bizjs/light-registry"
+                  href="https://github.com/bizjs/dockery"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-2 text-sm hover:text-footer-text transition-colors"
@@ -83,7 +83,7 @@ export function MainLayout({
                   <ExternalLink className="h-3 w-3" />
                 </a>
                 <a
-                  href="https://github.com/bizjs/light-registry/blob/main/README.md"
+                  href="https://github.com/bizjs/dockery/blob/main/README.md"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-2 text-sm hover:text-footer-text transition-colors"

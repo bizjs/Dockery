@@ -1,6 +1,6 @@
-# Light Registry
+# Dockery
 
-`Light Registry` is a minimal Docker Registry stack combining Docker Distribution, a pluggable auth-service, and a modern web UI — without the complexity of Harbor.
+`Dockery` is a minimal Docker Registry stack combining Docker Distribution, a pluggable auth-service, and a modern web UI — without the complexity of Harbor.
 
 [中文文档](./README_CN.md)
 
@@ -159,7 +159,7 @@ The nginx configuration uses templates with environment variable substitution:
 ### UI Cannot Connect to Registry
 
 1. Check if services are running: `docker-compose ps`
-2. Check network connection: `docker network inspect light-registry-net`
+2. Check network connection: `docker network inspect dockery-net`
 3. View UI logs: `docker-compose logs web-ui`
 4. View Registry logs: `docker-compose logs registry`
 

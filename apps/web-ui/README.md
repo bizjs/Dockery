@@ -1,4 +1,4 @@
-# Light Registry - Web UI
+# Dockery - Web UI
 
 Modern React-based web interface for Docker Registry, built with TypeScript, Tailwind CSS, and shadcn/ui.
 
