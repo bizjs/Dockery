@@ -55,11 +55,15 @@ func registerSessionRoutes(api *router.Router, svcs *service.Services) {
 	g.PUT("/users/{id}/password", svcs.User.SetPassword)
 
 	// UI → upstream-registry proxy.
+	// {name:.+} accepts multi-segment Docker image names like
+	// "demo/hello" or "org/team/svc". gorilla/mux backtracks the greedy
+	// `.+` against the trailing literal (/tags, /manifests, /blobs) so
+	// the match unambiguously resolves.
 	g.GET("/registry/catalog", svcs.Registry.Catalog)
-	g.GET("/registry/{name}/tags", svcs.Registry.Tags)
-	g.GET("/registry/{name}/manifests/{ref}", svcs.Registry.GetManifest)
-	g.DELETE("/registry/{name}/manifests/{ref}", svcs.Registry.DeleteManifest)
-	g.GET("/registry/{name}/blobs/{digest}", svcs.Registry.GetBlob)
+	g.GET("/registry/{name:.+}/tags", svcs.Registry.Tags)
+	g.GET("/registry/{name:.+}/manifests/{ref}", svcs.Registry.GetManifest)
+	g.DELETE("/registry/{name:.+}/manifests/{ref}", svcs.Registry.DeleteManifest)
+	g.GET("/registry/{name:.+}/blobs/{digest}", svcs.Registry.GetBlob)
 }
 
 // registerAdminRoutes — authenticated AND role=admin.

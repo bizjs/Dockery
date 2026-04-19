@@ -1,13 +1,17 @@
 # Dockery — all-in-one deployment.
 #
+# Dockery binds host port 5001 (container's 5000). Picking 5001 instead
+# of the "natural" 5000 avoids a conflict with macOS's AirPlay Receiver
+# service, which silently listens on 5000 by default.
+#
 #   docker compose up --build -d
-#   open http://localhost:5000
+#   open http://localhost:5001
 #
 # Docker CLI push/pull goes through the same port:
-#   docker tag hello-world localhost:5000/demo/hello:1
-#   docker push localhost:5000/demo/hello:1
+#   docker tag hello-world localhost:5001/demo/hello:1
+#   docker push localhost:5001/demo/hello:1
 #
-# (Add "localhost:5000" to Docker Desktop's insecure-registries until
+# (Add "localhost:5001" to Docker Desktop's insecure-registries until
 #  TLS termination lands in M4.)
 services:
   dockery:
@@ -28,7 +32,7 @@ services:
       # Realm URL docker CLI receives in WWW-Authenticate. Must be the
       # exact host:port the CLI will actually hit. Override for public
       # deploys, e.g.  REGISTRY_AUTH_TOKEN_REALM=https://registry.example.com/token
-      REGISTRY_AUTH_TOKEN_REALM: '${REGISTRY_AUTH_TOKEN_REALM:-http://localhost:5000/token}'
+      REGISTRY_AUTH_TOKEN_REALM: '${REGISTRY_AUTH_TOKEN_REALM:-http://localhost:5001/token}'
     volumes:
       - dockery-data:/data
 

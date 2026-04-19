@@ -47,7 +47,7 @@ auth:
     # Overridden at runtime by REGISTRY_AUTH_TOKEN_REALM from the env —
     # compose / docker run must set it to whatever URL the docker CLI
     # will see (e.g. https://registry.example.com/token in prod).
-    realm: http://localhost:5000/token
+    realm: http://localhost:5001/token
     service: dockery
     issuer: dockery-api
     # distribution v3 accepts only CERTIFICATE PEMs in rootcertbundle
