@@ -75,17 +75,23 @@ func newHarness(t *testing.T) *harness {
 	}
 	userRepo := data.NewUserRepo(d, logger)
 	permRepo := data.NewPermissionRepo(d, logger)
+	auditRepo := data.NewAuditRepo(d, logger)
 	userUC := biz.NewUserUsecase(userRepo)
 	permUC := biz.NewPermissionUsecase(permRepo, userRepo)
+	auditUC := biz.NewAuditUsecase(auditRepo, logger)
+	maint := biz.NewMaintenance()
+	// Use a no-op GC runner in tests — the endpoint isn't exercised here
+	// and we don't want to actually shell out to supervisorctl.
+	gcRunner := biz.NewGCRunner(biz.GCConfig{}, maint, auditUC, logger)
 
 	svcs := &service.Services{
 		System:     service.NewSystemService(),
-		Auth:       service.NewAuthService(userUC),
-		User:       service.NewUserService(userUC, permUC),
-		Permission: service.NewPermissionService(permUC, userUC),
-		Registry:   service.NewRegistryService(userUC, permUC, iss),
-		Token:      service.NewTokenService(userUC, permUC, iss),
-		Admin:      service.NewAdminService(),
+		Auth:       service.NewAuthService(userUC, auditUC),
+		User:       service.NewUserService(userUC, permUC, auditUC),
+		Permission: service.NewPermissionService(permUC, userUC, auditUC),
+		Registry:   service.NewRegistryService(userUC, permUC, iss, auditUC, maint),
+		Token:      service.NewTokenService(userUC, permUC, iss, auditUC),
+		Admin:      service.NewAdminService(auditUC, gcRunner),
 	}
 
 	// We still build a kratos http.Server for its option chain

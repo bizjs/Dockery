@@ -20,10 +20,11 @@ type TokenService struct {
 	users *biz.UserUsecase
 	perms *biz.PermissionUsecase
 	iss   *biz.TokenIssuer
+	audit *biz.AuditUsecase
 }
 
-func NewTokenService(users *biz.UserUsecase, perms *biz.PermissionUsecase, iss *biz.TokenIssuer) *TokenService {
-	return &TokenService{users: users, perms: perms, iss: iss}
+func NewTokenService(users *biz.UserUsecase, perms *biz.PermissionUsecase, iss *biz.TokenIssuer, audit *biz.AuditUsecase) *TokenService {
+	return &TokenService{users: users, perms: perms, iss: iss, audit: audit}
 }
 
 // TokenResponse is the Docker-spec success payload.
@@ -64,14 +65,25 @@ func (s *TokenService) Issue(ctx *router.Context) error {
 		return s.issueAnonymous(ctx)
 	}
 
+	clientIP := ctx.ClientIP()
+	requestedScopes := ctx.QueryArray("scope")
+
 	user, err := s.users.VerifyCredentials(ctx.Context(), username, password)
 	if err != nil {
+		s.audit.Write(ctx.Context(), biz.AuditEntry{
+			Actor:    username,
+			Action:   biz.ActionTokenDenied,
+			Scope:    joinScopes(requestedScopes),
+			ClientIP: clientIP,
+			Success:  false,
+			Detail:   map[string]any{"reason": "invalid credentials"},
+		})
 		return writeDockerError(ctx, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
 	}
 
 	// Parse requested scopes from query. The Docker CLI passes "scope"
 	// possibly multiple times.
-	requested, _ := scope.ParseMany(ctx.QueryArray("scope"))
+	requested, _ := scope.ParseMany(requestedScopes)
 
 	// Resolve what the user is actually allowed to do.
 	resolved, err := s.perms.ResolveAccess(ctx.Context(), user, requested)
@@ -91,12 +103,40 @@ func (s *TokenService) Issue(ctx *router.Context) error {
 		return writeDockerError(ctx, http.StatusInternalServerError, "DENIED", "token signing failed")
 	}
 
+	s.audit.Write(ctx.Context(), biz.AuditEntry{
+		Actor:    user.Username,
+		Action:   biz.ActionTokenIssued,
+		Scope:    describeAccess(access),
+		ClientIP: clientIP,
+		Success:  true,
+	})
+
 	return ctx.JSON(http.StatusOK, TokenResponse{
 		Token:       tok,
 		AccessToken: tok,
 		ExpiresIn:   s.iss.ExpiresIn(),
 		IssuedAt:    time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+// describeAccess renders the granted scopes as the Docker-style
+// "type:name:actions" CSV (matches what the CLI sends in via `scope=`).
+// Used for the audit row so operators can grep for suspicious grants.
+func describeAccess(access []biz.RegistryAccess) string {
+	if len(access) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(access))
+	for _, a := range access {
+		parts = append(parts, a.Type+":"+a.Name+":"+strings.Join(a.Actions, ","))
+	}
+	return strings.Join(parts, " ")
+}
+
+// joinScopes concatenates the raw incoming `scope=` params. Used in the
+// token.denied audit row when we don't have a parsed access list.
+func joinScopes(ss []string) string {
+	return strings.Join(ss, " ")
 }
 
 // issueAnonymous returns a valid but access-empty token so the Docker

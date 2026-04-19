@@ -12,9 +12,7 @@ import (
 	"api/internal/data"
 	"api/internal/server"
 	"api/internal/service"
-
 	"github.com/bizjs/kratoscarf/auth/session"
-
 	"github.com/go-kratos/kratos/v2"
 	"github.com/go-kratos/kratos/v2/log"
 )
@@ -27,39 +25,38 @@ import (
 
 // wireApp init kratos application.
 func wireApp(confServer *conf.Server, confData *conf.Data, dockery *conf.Dockery, logger log.Logger) (*kratos.App, func(), error) {
+	systemService := service.NewSystemService()
 	dataData, cleanup, err := data.NewData(confData, logger)
 	if err != nil {
 		return nil, nil, err
 	}
 	userRepo := data.NewUserRepo(dataData, logger)
-	permissionRepo := data.NewPermissionRepo(dataData, logger)
 	userUsecase := biz.NewUserUsecase(userRepo)
+	auditRepo := data.NewAuditRepo(dataData, logger)
+	auditUsecase := biz.NewAuditUsecase(auditRepo, logger)
+	authService := service.NewAuthService(userUsecase, auditUsecase)
+	permissionRepo := data.NewPermissionRepo(dataData, logger)
 	permissionUsecase := biz.NewPermissionUsecase(permissionRepo, userRepo)
-
-	keystoreCfg := biz.NewKeystoreConfigFromConf(dockery)
-	keystore, err := biz.NewKeystore(keystoreCfg)
+	userService := service.NewUserService(userUsecase, permissionUsecase, auditUsecase)
+	permissionService := service.NewPermissionService(permissionUsecase, userUsecase, auditUsecase)
+	keystoreConfig := biz.NewKeystoreConfigFromConf(dockery)
+	keystore, err := biz.NewKeystore(keystoreConfig)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	tokenIssuerCfg := biz.NewTokenIssuerConfigFromConf(dockery)
-	tokenIssuer, err := biz.NewTokenIssuer(keystore, tokenIssuerCfg)
+	tokenIssuerConfig := biz.NewTokenIssuerConfigFromConf(dockery)
+	tokenIssuer, err := biz.NewTokenIssuer(keystore, tokenIssuerConfig)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-
-	sessionStore := session.NewMemoryStore()
-	sessionCfg := biz.NewSessionConfigFromConf(dockery)
-	sessionManager := session.NewManager(sessionStore, sessionCfg)
-
-	systemService := service.NewSystemService()
-	authService := service.NewAuthService(userUsecase)
-	userService := service.NewUserService(userUsecase, permissionUsecase)
-	permissionService := service.NewPermissionService(permissionUsecase, userUsecase)
-	registryService := service.NewRegistryService(userUsecase, permissionUsecase, tokenIssuer)
-	tokenService := service.NewTokenService(userUsecase, permissionUsecase, tokenIssuer)
-	adminService := service.NewAdminService()
+	maintenance := biz.NewMaintenance()
+	registryService := service.NewRegistryService(userUsecase, permissionUsecase, tokenIssuer, auditUsecase, maintenance)
+	tokenService := service.NewTokenService(userUsecase, permissionUsecase, tokenIssuer, auditUsecase)
+	gcConfig := biz.NewGCConfigFromConf(dockery)
+	gcRunner := biz.NewGCRunner(gcConfig, maintenance, auditUsecase, logger)
+	adminService := service.NewAdminService(auditUsecase, gcRunner)
 	services := &service.Services{
 		System:     systemService,
 		Auth:       authService,
@@ -69,7 +66,10 @@ func wireApp(confServer *conf.Server, confData *conf.Data, dockery *conf.Dockery
 		Token:      tokenService,
 		Admin:      adminService,
 	}
-	httpServer := server.NewHTTPServer(confServer, services, sessionManager, logger)
+	memoryStore := session.NewMemoryStore()
+	config := biz.NewSessionConfigFromConf(dockery)
+	manager := biz.NewSessionManager(memoryStore, config)
+	httpServer := server.NewHTTPServer(confServer, services, manager, logger)
 	app := newApp(logger, httpServer, userUsecase, dockery)
 	return app, func() {
 		cleanup()

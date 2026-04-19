@@ -29,23 +29,27 @@ import (
 //   4. Responses (or list contents) are passed through to the UI after
 //      optional filtering (catalog is filtered for non-admins).
 type RegistryService struct {
-	users    *biz.UserUsecase
-	perms    *biz.PermissionUsecase
-	tokens   *biz.TokenIssuer
-	upstream string
-	client   *http.Client
+	users       *biz.UserUsecase
+	perms       *biz.PermissionUsecase
+	tokens      *biz.TokenIssuer
+	audit       *biz.AuditUsecase
+	maintenance *biz.Maintenance
+	upstream    string
+	client      *http.Client
 }
 
 // NewRegistryService wires the proxy. Upstream is pinned to the
 // loopback address the supervisord starts registry on; when the
 // container moves to multi-host, this becomes configurable.
-func NewRegistryService(users *biz.UserUsecase, perms *biz.PermissionUsecase, tokens *biz.TokenIssuer) *RegistryService {
+func NewRegistryService(users *biz.UserUsecase, perms *biz.PermissionUsecase, tokens *biz.TokenIssuer, audit *biz.AuditUsecase, maintenance *biz.Maintenance) *RegistryService {
 	return &RegistryService{
-		users:    users,
-		perms:    perms,
-		tokens:   tokens,
-		upstream: "http://127.0.0.1:5001",
-		client:   &http.Client{Timeout: 30 * time.Second},
+		users:       users,
+		perms:       perms,
+		tokens:      tokens,
+		audit:       audit,
+		maintenance: maintenance,
+		upstream:    "http://127.0.0.1:5001",
+		client:      &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -155,6 +159,11 @@ func (s *RegistryService) GetManifest(ctx *router.Context) error {
 // distribution rejects DELETE-by-tag ("manifests are only deletable
 // by digest").
 func (s *RegistryService) DeleteManifest(ctx *router.Context) error {
+	// Reject cleanly during GC. Without this, the upstream delete would
+	// fail with a confusing 502 (registry is stopped).
+	if s.maintenance.Active() {
+		return response.NewBizError(http.StatusServiceUnavailable, 50301, "registry is in maintenance")
+	}
 	name := ctx.Param("name")
 	ref := ctx.Param("ref")
 	if err := s.authorize(ctx, name, "delete"); err != nil {
@@ -180,6 +189,14 @@ func (s *RegistryService) DeleteManifest(ctx *router.Context) error {
 	if status != http.StatusAccepted && status != http.StatusOK {
 		return response.NewBizError(status, 50000, fmt.Sprintf("upstream: %s", trimBody(body)))
 	}
+	s.audit.Write(ctx.Context(), biz.AuditEntry{
+		Actor:    sessionUsername(ctx),
+		Action:   biz.ActionImageDeleted,
+		Target:   "repository:" + name,
+		ClientIP: ctx.ClientIP(),
+		Success:  true,
+		Detail:   map[string]any{"ref": ref, "digest": digest},
+	})
 	return ctx.Success(map[string]string{"digest": digest})
 }
 

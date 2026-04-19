@@ -17,10 +17,11 @@ import (
 type UserService struct {
 	users *biz.UserUsecase
 	perms *biz.PermissionUsecase
+	audit *biz.AuditUsecase
 }
 
-func NewUserService(users *biz.UserUsecase, perms *biz.PermissionUsecase) *UserService {
-	return &UserService{users: users, perms: perms}
+func NewUserService(users *biz.UserUsecase, perms *biz.PermissionUsecase, audit *biz.AuditUsecase) *UserService {
+	return &UserService{users: users, perms: perms, audit: audit}
 }
 
 // --- DTOs ---
@@ -95,6 +96,14 @@ func (s *UserService) Create(ctx *router.Context) error {
 		// Likely unique constraint violation.
 		return response.ErrConflict.WithMessage(err.Error())
 	}
+	s.audit.Write(ctx.Context(), biz.AuditEntry{
+		Actor:    sessionUsername(ctx),
+		Action:   biz.ActionUserCreated,
+		Target:   "user:" + u.Username,
+		ClientIP: ctx.ClientIP(),
+		Success:  true,
+		Detail:   map[string]any{"role": u.Role},
+	})
 	return ctx.Success(toUserView(u))
 }
 
@@ -124,6 +133,17 @@ func (s *UserService) Update(ctx *router.Context) error {
 	if err := ctx.Bind(&req); err != nil {
 		return err
 	}
+	// Snapshot pre-mutation so we can describe the transition in audit rows.
+	before, err := s.users.GetByID(ctx.Context(), id)
+	if err != nil {
+		if errors.Is(err, biz.ErrUserNotFound) {
+			return response.ErrNotFound
+		}
+		return response.ErrInternal.WithCause(err)
+	}
+	actor := sessionUsername(ctx)
+	ip := ctx.ClientIP()
+
 	if req.Role != nil {
 		if err := s.users.SetRole(ctx.Context(), id, *req.Role); err != nil {
 			switch {
@@ -136,6 +156,16 @@ func (s *UserService) Update(ctx *router.Context) error {
 			}
 			return response.ErrInternal.WithCause(err)
 		}
+		if before.Role != *req.Role {
+			s.audit.Write(ctx.Context(), biz.AuditEntry{
+				Actor:    actor,
+				Action:   biz.ActionUserRoleChanged,
+				Target:   "user:" + before.Username,
+				ClientIP: ip,
+				Success:  true,
+				Detail:   map[string]any{"from": before.Role, "to": *req.Role},
+			})
+		}
 	}
 	if req.Disabled != nil {
 		// Admin disabling themselves would lock the UI out on the next
@@ -145,6 +175,19 @@ func (s *UserService) Update(ctx *router.Context) error {
 		}
 		if err := s.users.SetDisabled(ctx.Context(), id, *req.Disabled); err != nil {
 			return response.ErrInternal.WithCause(err)
+		}
+		if before.Disabled != *req.Disabled {
+			action := biz.ActionUserEnabled
+			if *req.Disabled {
+				action = biz.ActionUserDisabled
+			}
+			s.audit.Write(ctx.Context(), biz.AuditEntry{
+				Actor:    actor,
+				Action:   action,
+				Target:   "user:" + before.Username,
+				ClientIP: ip,
+				Success:  true,
+			})
 		}
 	}
 	u, err := s.users.GetByID(ctx.Context(), id)
@@ -165,6 +208,15 @@ func (s *UserService) Delete(ctx *router.Context) error {
 	if id == sessionUserID(ctx) {
 		return response.ErrBadRequest.WithMessage("cannot delete your own account")
 	}
+	// Capture the username before deletion so the audit row has a
+	// meaningful target (ID alone isn't useful a year later).
+	before, err := s.users.GetByID(ctx.Context(), id)
+	if err != nil {
+		if errors.Is(err, biz.ErrUserNotFound) {
+			return response.ErrNotFound
+		}
+		return response.ErrInternal.WithCause(err)
+	}
 	if err := s.users.Delete(ctx.Context(), id); err != nil {
 		switch {
 		case errors.Is(err, biz.ErrUserNotFound):
@@ -174,6 +226,13 @@ func (s *UserService) Delete(ctx *router.Context) error {
 		}
 		return response.ErrInternal.WithCause(err)
 	}
+	s.audit.Write(ctx.Context(), biz.AuditEntry{
+		Actor:    sessionUsername(ctx),
+		Action:   biz.ActionUserDeleted,
+		Target:   "user:" + before.Username,
+		ClientIP: ctx.ClientIP(),
+		Success:  true,
+	})
 	return ctx.Success(nil)
 }
 
@@ -216,6 +275,19 @@ func (s *UserService) SetPassword(ctx *router.Context) error {
 		}
 		return response.ErrInternal.WithCause(err)
 	}
+	// Resolve target username for the audit row; error here is non-fatal.
+	targetName := ""
+	if t, err := s.users.GetByID(ctx.Context(), targetID); err == nil {
+		targetName = t.Username
+	}
+	s.audit.Write(ctx.Context(), biz.AuditEntry{
+		Actor:    sessionUsername(ctx),
+		Action:   biz.ActionUserPasswordChanged,
+		Target:   "user:" + targetName,
+		ClientIP: ctx.ClientIP(),
+		Success:  true,
+		Detail:   map[string]any{"self_service": targetID == callerID && !isAdmin},
+	})
 	return ctx.Success(nil)
 }
 

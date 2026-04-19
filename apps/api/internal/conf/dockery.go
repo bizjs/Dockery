@@ -14,6 +14,7 @@ type Dockery struct {
 	Token    DockeryToken    `json:"token"    yaml:"token"`
 	Admin    DockeryAdmin    `json:"admin"    yaml:"admin"`
 	Session  DockerySession  `json:"session"  yaml:"session"`
+	GC       DockeryGC       `json:"gc"       yaml:"gc"`
 }
 
 // DockeryKeystore is the filesystem location of the Ed25519 signing
@@ -50,6 +51,26 @@ type DockeryToken struct {
 type DockeryAdmin struct {
 	Username string `json:"username" yaml:"username"`
 	Password string `json:"password" yaml:"password"`
+}
+
+// DockeryGC configures how dockery-api drives garbage collection of
+// the upstream distribution registry. All paths default to the baked
+// container layout (supervisord + alpine); override when running
+// dockery-api outside the provided image.
+type DockeryGC struct {
+	SupervisorctlBin string `json:"supervisorctl_bin" yaml:"supervisorctl_bin"` // /usr/bin/supervisorctl
+	SupervisordConf  string `json:"supervisord_conf"  yaml:"supervisord_conf"`  // /etc/supervisord.conf
+	RegistryBin      string `json:"registry_bin"      yaml:"registry_bin"`      // /usr/local/bin/registry
+	RegistryConf     string `json:"registry_conf"     yaml:"registry_conf"`     // /etc/docker/registry/config.yml
+	ServiceName      string `json:"service_name"      yaml:"service_name"`      // supervisord [program:<name>]
+	// DeleteUntagged passes --delete-untagged to `registry garbage-collect`
+	// so manifests with no remaining tag are removed too. Default: true.
+	// Only disable if you actively rely on digest-only references after
+	// tag deletion (unusual).
+	DeleteUntagged *bool `json:"delete_untagged" yaml:"delete_untagged"`
+	// TimeoutSeconds is the hard cap on the full stop/gc/restart cycle.
+	// Default: 1800 (30 min). Raise for very large registries.
+	TimeoutSeconds int `json:"timeout_seconds" yaml:"timeout_seconds"`
 }
 
 // DockerySession configures the Web UI cookie session, backed by

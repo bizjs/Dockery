@@ -33,6 +33,44 @@ func NewTokenIssuerConfigFromConf(c *conf.Dockery) TokenIssuerConfig {
 	}
 }
 
+// NewGCConfigFromConf converts the yaml DockeryGC section into biz.GCConfig.
+// Empty fields fall back to the container-baked defaults so operators
+// can override only what they need (or leave the section out entirely).
+func NewGCConfigFromConf(c *conf.Dockery) GCConfig {
+	cfg := defaultGCConfig()
+	g := c.GC
+	if g.SupervisorctlBin != "" {
+		cfg.SupervisorctlBin = g.SupervisorctlBin
+	}
+	if g.SupervisordConf != "" {
+		cfg.SupervisordConf = g.SupervisordConf
+	}
+	if g.RegistryBin != "" {
+		cfg.RegistryBin = g.RegistryBin
+	}
+	if g.RegistryConf != "" {
+		cfg.RegistryConf = g.RegistryConf
+	}
+	if g.ServiceName != "" {
+		cfg.ServiceName = g.ServiceName
+	}
+	if g.DeleteUntagged != nil {
+		cfg.DeleteUntagged = *g.DeleteUntagged
+	}
+	if g.TimeoutSeconds > 0 {
+		cfg.Timeout = time.Duration(g.TimeoutSeconds) * time.Second
+	}
+	return cfg
+}
+
+// NewSessionManager is a variadic-free wrapper around
+// session.NewManager so wire can provide a *Manager without needing to
+// materialize a (usually empty) []session.Option. We never pass
+// functional options today; if that changes, extend this wrapper.
+func NewSessionManager(store session.Store, cfg session.Config) *session.Manager {
+	return session.NewManager(store, cfg)
+}
+
 // NewSessionConfigFromConf maps the yaml Session section into a
 // kratoscarf session.Config. The kratoscarf struct uses camelCase yaml
 // tags internally, but Dockery exposes snake_case through its own conf

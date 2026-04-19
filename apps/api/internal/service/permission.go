@@ -16,10 +16,11 @@ import (
 type PermissionService struct {
 	perms *biz.PermissionUsecase
 	users *biz.UserUsecase
+	audit *biz.AuditUsecase
 }
 
-func NewPermissionService(perms *biz.PermissionUsecase, users *biz.UserUsecase) *PermissionService {
-	return &PermissionService{perms: perms, users: users}
+func NewPermissionService(perms *biz.PermissionUsecase, users *biz.UserUsecase, audit *biz.AuditUsecase) *PermissionService {
+	return &PermissionService{perms: perms, users: users, audit: audit}
 }
 
 // --- DTOs ---
@@ -107,8 +108,27 @@ func (s *PermissionService) GrantBatch(ctx *router.Context) error {
 		return response.ErrInternal.WithCause(err)
 	}
 	items := make([]PermissionView, 0, len(rows))
+	patterns := make([]string, 0, len(rows))
 	for _, p := range rows {
 		items = append(items, toPermissionView(p))
+		patterns = append(patterns, p.RepoPattern)
+	}
+	// Audit only the rows that were actually inserted (duplicates were
+	// silently dropped; not worth auditing non-events).
+	if len(rows) > 0 {
+		target, _ := s.users.GetByID(ctx.Context(), userID)
+		targetName := ""
+		if target != nil {
+			targetName = target.Username
+		}
+		s.audit.Write(ctx.Context(), biz.AuditEntry{
+			Actor:    sessionUsername(ctx),
+			Action:   biz.ActionPermissionGranted,
+			Target:   "user:" + targetName,
+			ClientIP: ctx.ClientIP(),
+			Success:  true,
+			Detail:   map[string]any{"patterns": patterns},
+		})
 	}
 	return ctx.Success(PermissionListView{Items: items, Total: len(items)})
 }
@@ -132,6 +152,14 @@ func (s *PermissionService) Update(ctx *router.Context) error {
 		}
 		return response.ErrInternal.WithCause(err)
 	}
+	s.audit.Write(ctx.Context(), biz.AuditEntry{
+		Actor:    sessionUsername(ctx),
+		Action:   biz.ActionPermissionUpdated,
+		Target:   "permission:" + strconv.Itoa(id),
+		ClientIP: ctx.ClientIP(),
+		Success:  true,
+		Detail:   map[string]any{"pattern": req.RepoPattern},
+	})
 	return ctx.Success(nil)
 }
 
@@ -147,6 +175,13 @@ func (s *PermissionService) Revoke(ctx *router.Context) error {
 		}
 		return response.ErrInternal.WithCause(err)
 	}
+	s.audit.Write(ctx.Context(), biz.AuditEntry{
+		Actor:    sessionUsername(ctx),
+		Action:   biz.ActionPermissionRevoked,
+		Target:   "permission:" + strconv.Itoa(id),
+		ClientIP: ctx.ClientIP(),
+		Success:  true,
+	})
 	return ctx.Success(nil)
 }
 

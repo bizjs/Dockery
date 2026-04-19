@@ -1,0 +1,30 @@
+# Consumer-side compose: pulls the pre-built image from GHCR instead of
+# building locally. Use this on any host that just wants to run Dockery.
+#
+#   export DOCKERY_ADMIN_PASSWORD='change-me-on-first-boot'
+#   # point REGISTRY_AUTH_TOKEN_REALM at whatever docker-CLI-visible URL
+#   # this host answers on (critical for public deploys behind TLS):
+#   export REGISTRY_AUTH_TOKEN_REALM='https://registry.example.com/token'
+#   docker compose -f docker-compose.ghcr.yml pull
+#   docker compose -f docker-compose.ghcr.yml up -d
+#
+# DOCKERY_IMAGE lets you pin a specific tag (default :latest). Pin in
+# production — rolling `:latest` can surprise you.
+services:
+  dockery:
+    image: "${DOCKERY_IMAGE:-ghcr.io/bizjs/light-registry:latest}"
+    container_name: dockery
+    restart: unless-stopped
+    ports:
+      - "5001:5000"
+    environment:
+      DOCKERY_ADMIN_USERNAME: "${DOCKERY_ADMIN_USERNAME:-admin}"
+      # Required on first boot against an empty volume; ignored thereafter.
+      DOCKERY_ADMIN_PASSWORD: "${DOCKERY_ADMIN_PASSWORD:?set DOCKERY_ADMIN_PASSWORD before first start}"
+      REGISTRY_AUTH_TOKEN_REALM: "${REGISTRY_AUTH_TOKEN_REALM:-http://localhost:5001/token}"
+    volumes:
+      - dockery-data:/data
+
+volumes:
+  dockery-data:
+    driver: local

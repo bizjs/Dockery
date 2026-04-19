@@ -23,10 +23,11 @@ const (
 // Docker CLI token issuance lives in TokenService.
 type AuthService struct {
 	users *biz.UserUsecase
+	audit *biz.AuditUsecase
 }
 
-func NewAuthService(users *biz.UserUsecase) *AuthService {
-	return &AuthService{users: users}
+func NewAuthService(users *biz.UserUsecase, audit *biz.AuditUsecase) *AuthService {
+	return &AuthService{users: users, audit: audit}
 }
 
 // --- DTOs ---
@@ -59,8 +60,15 @@ func (s *AuthService) Login(ctx *router.Context) error {
 	if err := ctx.Bind(&req); err != nil {
 		return err
 	}
+	clientIP := ctx.ClientIP()
 	user, err := s.users.VerifyCredentials(ctx.Context(), req.Username, req.Password)
 	if err != nil {
+		s.audit.Write(ctx.Context(), biz.AuditEntry{
+			Actor:    req.Username,
+			Action:   biz.ActionAuthLoginFailure,
+			ClientIP: clientIP,
+			Success:  false,
+		})
 		return response.NewBizError(http.StatusUnauthorized, 40101, "invalid credentials")
 	}
 
@@ -71,6 +79,13 @@ func (s *AuthService) Login(ctx *router.Context) error {
 	sess.Set(sessKeyUserID, user.ID)
 	sess.Set(sessKeyUsername, user.Username)
 	sess.Set(sessKeyRole, user.Role)
+
+	s.audit.Write(ctx.Context(), biz.AuditEntry{
+		Actor:    user.Username,
+		Action:   biz.ActionAuthLoginSuccess,
+		ClientIP: clientIP,
+		Success:  true,
+	})
 
 	return ctx.Success(LoginResponse{ID: user.ID, Username: user.Username, Role: user.Role})
 }
@@ -130,4 +145,18 @@ func sessionRole(ctx *router.Context) string {
 	v, _ := sess.Get(sessKeyRole)
 	s2, _ := v.(string)
 	return s2
+}
+
+// sessionUsername returns the caller's username or "anonymous". Used as
+// the actor on audit rows written by mutation handlers.
+func sessionUsername(ctx *router.Context) string {
+	sess := session.FromContext(ctx.Context())
+	if sess == nil {
+		return "anonymous"
+	}
+	v, _ := sess.Get(sessKeyUsername)
+	if name, ok := v.(string); ok && name != "" {
+		return name
+	}
+	return "anonymous"
 }
