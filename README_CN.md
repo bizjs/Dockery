@@ -1,271 +1,116 @@
 # Dockery
 
-`Dockery` 是一个轻量级的 Docker Registry 解决方案，结合了 Docker Distribution、可插拔的认证服务和现代化的 Web UI —— 没有 Harbor 的复杂性。
+自托管 Docker Registry —— **Distribution v3.1.0 + React UI + 账户/权限 + 单镜像**。一个容器跑 registry、API、Web UI，同一个 nginx 端口对外。面向小团队 / 个人开发者。
 
-[English Documentation](./README.md)
+[English](./README.md) · [设计文档](./docs/dockery-design.md)
 
 ## 特性
 
-- ✅ **Docker Registry v3.0.0**：官方 Docker Distribution
-- ✅ **现代化 Web UI**：React + TypeScript + shadcn/ui
-- ✅ **完整管理功能**：浏览、查看详情、删除镜像
-- ✅ **Nginx 代理**：通过单一端口统一访问
-- ✅ **灵活配置**：支持环境变量配置
-- ✅ **生产就绪**：Docker Compose 一键部署
+- 📦 推送 / 拉取 / 浏览 OCI + Docker v2 镜像
+- 🔐 CLI 与 Web UI 共用账户：三档角色（`admin` / `write` / `view`）+ per-user glob 仓库模式
+- 🔑 Ed25519 短命 registry JWT（默认 5 分钟，registry 通过 JWKS 验签）
+- 🌐 React 19 UI：登录、角色守卫、用户 & 权限管理、改密
+- 🐳 一个镜像、一个端口、SQLite + 文件系统 blob；备份只需 `/data`
 
-## 架构说明
-
-### 网络架构
-- Web UI 通过 nginx 在 3000 端口提供服务
-- Registry API 通过 nginx 的 `/v2/` 路径代理
-- 无 CORS 问题，统一域名访问
-- Registry 服务在内部 5000 端口运行
-
-### 端口映射
-- **Web UI**：外部端口 3000 → 内部端口 80 (nginx)
-- **Registry**：内部端口 5000（默认不对外暴露）
+**v0.1 不做**：镜像扫描、cosign 签名、复制、多租户、HA、代理缓存。
 
 ## 快速开始
 
-### 前置要求
-
-- Docker Engine 20.10+
-- Docker Compose 2.0+
-
-### 1. 配置 Docker Daemon
-
-编辑 Docker 配置（macOS 在 Docker Desktop 设置中）：
-
-```json
-{
-  "insecure-registries": ["localhost:3000"]
-}
+```bash
+# Docker Desktop → 设置 → Docker Engine: "insecure-registries": ["localhost:5001"]
+DOCKERY_ADMIN_PASSWORD='change-me' docker compose up --build -d
+open http://localhost:5001      # 用 admin / change-me 登录
 ```
 
-配置后重启 Docker。
+`DOCKERY_ADMIN_PASSWORD` 只在 `/data` 首次初始化时生效。TLS 请自挂反向代理（M4 会内置）。
 
-### 2. 启动服务
+### 推送镜像
 
 ```bash
-# 构建并启动所有服务
-docker-compose up -d
-
-# 查看日志
-docker-compose logs -f
-
-# 查看特定服务的日志
-docker-compose logs -f web-ui
-docker-compose logs -f registry
+docker login localhost:5001
+docker tag hello-world localhost:5001/demo/hello:1
+docker push localhost:5001/demo/hello:1
 ```
 
-### 3. 访问 Web UI
+## 用户与权限管理
 
-打开浏览器：http://localhost:3000
+**Web UI（管理员菜单 → Manage users）** —— 创建用户、改角色、改密、启用/禁用、删除，以及通过 permissions 抽屉给 `write` / `view` 用户添加/编辑/撤销仓库模式。`view` 角色登录后不会看到删除按钮。所有用户都可在头像菜单里自助改密。
 
-### 4. 推送镜像到 Registry
+**CLI 备用**（无需启动 HTTP 服务）：
 
 ```bash
-# 标记镜像
-docker tag your-image:tag localhost:3000/your-image:tag
-
-# 推送镜像（通过 nginx 代理）
-docker push localhost:3000/your-image:tag
+docker exec -it dockery dockery-api -conf /etc/dockery user list
+docker exec -it dockery dockery-api -conf /etc/dockery user create alice write
+docker exec -it dockery dockery-api -conf /etc/dockery user grant  alice 'alice/*,shared/app'
+docker exec -it dockery dockery-api -conf /etc/dockery user passwd alice
+docker exec -it dockery dockery-api -conf /etc/dockery user revoke 42     # permission id
+docker exec -it dockery dockery-api -conf /etc/dockery user delete alice
 ```
 
-### 5. 拉取镜像
+系统会拒绝删除或降级最后一个 admin。
+
+## 配置
+
+### 环境变量
+
+| 变量 | 默认值 | 用途 |
+|---|---|---|
+| `DOCKERY_ADMIN_USERNAME` | `admin` | 首次启动的 admin 用户名 |
+| `DOCKERY_ADMIN_PASSWORD` | _首次启动必填_ | 首次启动的 admin 密码 |
+| `REGISTRY_AUTH_TOKEN_REALM` | `http://localhost:5001/token` | Docker CLI 回源 token 的 URL；必须与对外地址一致 |
+| `REGISTRY_STORAGE_*` | — | 透传给 distribution，切换存储后端 |
+
+其余项（token TTL、issuer、session cookie 等）在 `docker/rootfs/etc/dockery/config.yaml`；需要定制就挂自己的 `config.yaml` 到 `/etc/dockery/`。
+
+### 持久化
+
+```
+/data/
+├── registry/          镜像 blob
+├── db/dockery.db      SQLite（users / repo_permissions / audit_log）
+└── config/
+    ├── jwt-private.pem  Ed25519 私钥（0600），单一真源
+    └── jwt-jwks.json    由私钥每次启动派生
+```
+
+**备份 = `/data` 整包**。丢 `jwt-private.pem` → 签出去的 token 全废；丢 `dockery.db` → 用户表重置。
+
+## 架构
+
+```
+           外部 :5001 (host → :5000 container)
+                       │
+                   [ nginx ]
+    ┌────────────┬────────┬────────────┐
+    │            │        │            │
+   / 静态     /token   /api/*        /v2/*
+    │            │        │            │
+ web-ui    dockery-api :3001   distribution :5001
+                 │                    ▲
+                 ├── SQLite           │
+                 ├── jwt-private.pem  │
+                 └── jwt-jwks.json ───┘  registry 用 JWKS 验签
+```
+
+容器内三个进程由 supervisord 编排。完整设计见 [`docs/dockery-design.md`](./docs/dockery-design.md)。
+
+## 本地开发
 
 ```bash
-# 从 registry 拉取
-docker pull localhost:3000/your-image:tag
+# 前端（:5173）
+cd apps/web-ui && pnpm install && pnpm dev
+
+# 后端（:5001）
+cd apps/api && make run
+
+# 裸 registry（:5000），给前端 /v2 代理用
+docker run -p 5000:5000 distribution/distribution:3.1.0
 ```
 
-## 管理命令
+## 发布
 
-### 停止服务
-```bash
-docker-compose down
-```
+打 `v*` tag → GitHub Actions 构建并推送 `ghcr.io/<owner>/<repo>:<version>` 与 `:latest`（linux/amd64 + linux/arm64）。
 
-### 停止并删除数据
-```bash
-docker-compose down -v
-```
+## License
 
-### 重新构建 UI
-```bash
-docker-compose build web-ui
-docker-compose up -d web-ui
-```
-
-### 查看服务状态
-```bash
-docker-compose ps
-```
-
-## 配置说明
-
-### Registry 配置
-
-在 `docker-compose.yaml` 中的环境变量：
-
-```yaml
-registry:
-  environment:
-    REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /var/lib/registry
-    REGISTRY_STORAGE_DELETE_ENABLED: 'true'
-```
-
-### Web UI 配置
-
-UI 使用环境变量进行配置：
-
-```yaml
-web-ui:
-  environment:
-    - REGISTRY_URL=http://registry:5000
-```
-
-您可以自定义 registry URL 而无需重新构建镜像。
-
-### Nginx 配置
-
-nginx 配置使用模板和环境变量替换：
-
-- 模板文件：`web-ui/nginx.conf.template`
-- 使用 `${REGISTRY_URL}` 进行动态配置
-- 容器启动时自动处理
-
-## Web UI 功能
-
-### 镜像管理
-- ✅ 浏览所有镜像和标签
-- ✅ 查看镜像详情（大小、创建时间、架构）
-- ✅ 查看完整的镜像配置（Cmd、Env、Labels、Ports）
-- ✅ 查看镜像层历史记录
-- ✅ 按标签、大小或创建时间排序
-- ✅ 复制 Docker pull 命令
-- ✅ 删除镜像标签（带确认对话框）
-- ✅ 响应式设计，支持移动端
-
-### 技术细节
-- **框架**：React 19 + TypeScript
-- **构建工具**：Vite
-- **UI 组件**：shadcn/ui + Tailwind CSS
-- **状态管理**：Valtio
-- **HTTP 服务器**：Nginx (Alpine)
-
-## 故障排查
-
-### UI 无法连接到 Registry
-
-1. 检查服务是否运行：`docker-compose ps`
-2. 检查网络连接：`docker network inspect dockery-net`
-3. 查看 UI 日志：`docker-compose logs web-ui`
-4. 查看 Registry 日志：`docker-compose logs registry`
-
-### 无法推送镜像
-
-1. 确保 Docker daemon 配置了 insecure registry：
-   ```json
-   {
-     "insecure-registries": ["localhost:3000"]
-   }
-   ```
-2. 重启 Docker daemon
-3. 验证 registry 可访问：`curl http://localhost:3000/v2/`
-
-### 删除功能不工作
-
-确保 Registry 启用了删除功能（已在 docker-compose.yaml 中配置）：
-```yaml
-REGISTRY_STORAGE_DELETE_ENABLED: 'true'
-```
-
-## 生产环境部署
-
-### 1. 使用 HTTPS
-
-配置 SSL 证书：
-
-```yaml
-web-ui:
-  ports:
-    - "443:443"
-  volumes:
-    - ./ssl:/etc/nginx/ssl
-```
-
-更新 nginx 配置以使用 SSL。
-
-### 2. 添加认证
-
-配置 Registry 认证（基本认证或 Token 认证）。
-
-### 3. 配置存储后端
-
-使用云存储（S3、Azure Blob 等）替代本地文件系统：
-
-```yaml
-registry:
-  environment:
-    REGISTRY_STORAGE: s3
-    REGISTRY_STORAGE_S3_BUCKET: your-bucket
-    REGISTRY_STORAGE_S3_REGION: us-east-1
-```
-
-### 4. 设置资源限制
-
-```yaml
-web-ui:
-  deploy:
-    resources:
-      limits:
-        cpus: '1'
-        memory: 512M
-```
-
-## 开发
-
-### 在开发模式下运行 UI
-
-```bash
-cd web-ui
-pnpm install
-pnpm run dev
-```
-
-然后访问：http://localhost:5173
-
-### 构建 UI
-
-```bash
-cd web-ui
-pnpm run build
-```
-
-## 环境变量
-
-### Registry
-
-| 变量 | 默认值 | 描述 |
-|------|--------|------|
-| `REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY` | `/var/lib/registry` | 存储目录 |
-| `REGISTRY_STORAGE_DELETE_ENABLED` | `true` | 启用删除操作 |
-
-### Web UI
-
-| 变量 | 默认值 | 描述 |
-|------|--------|------|
-| `REGISTRY_URL` | `http://registry:5000` | Registry 后端 URL |
-
-## 许可证
-
-详见 [LICENSE](LICENSE) 文件。
-
-## 贡献
-
-欢迎贡献！请随时提交 Pull Request。
-
-## 支持
-
-如果遇到任何问题，请在 GitHub 上创建 issue。
+见 [LICENSE](LICENSE)。贡献请先开 issue / discussion。

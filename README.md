@@ -1,271 +1,116 @@
 # Dockery
 
-`Dockery` is a minimal Docker Registry stack combining Docker Distribution, a pluggable auth-service, and a modern web UI — without the complexity of Harbor.
+Self-hosted Docker Registry — **Distribution v3.1.0 + React UI + accounts/permissions + single image**. One container runs the registry, API, and Web UI behind one nginx port. For small teams and individuals who don't want Harbor.
 
-[中文文档](./README_CN.md)
+[中文](./README_CN.md) · [Design doc (CN)](./docs/dockery-design.md)
 
 ## Features
 
-- ✅ **Docker Registry v3.0.0**: Official Docker Distribution
-- ✅ **Modern Web UI**: React + TypeScript with shadcn/ui
-- ✅ **Full Management**: Browse, view details, and delete images
-- ✅ **Nginx Proxy**: Unified access through a single port
-- ✅ **Easy Configuration**: Environment variable support
-- ✅ **Production Ready**: Docker Compose deployment
+- 📦 Push / pull / browse OCI + Docker v2 images
+- 🔐 CLI + Web UI share one user store; three roles (`admin` / `write` / `view`) with per-user glob repo patterns
+- 🔑 Ed25519-signed short-lived registry JWTs (5 min default, verified by registry via JWKS)
+- 🌐 React 19 UI: login, route guards, user & permission management, password change
+- 🐳 Single image, single port, SQLite + filesystem blob storage; back up `/data`
 
-## Architecture
+**Out of scope for v0.1:** image scanning, cosign signing, replication, multi-tenancy, HA, pull-through cache.
 
-### Network Architecture
-- Web UI serves through nginx on port 3000
-- Registry API proxied through nginx at `/v2/` path
-- No CORS issues, unified domain access
-- Registry service runs internally on port 5000
-
-### Port Mapping
-- **Web UI**: External port 3000 → Internal port 80 (nginx)
-- **Registry**: Internal port 5000 (not exposed by default)
-
-## Quick Start
-
-### Prerequisites
-
-- Docker Engine 20.10+
-- Docker Compose 2.0+
-
-### 1. Configure Docker Daemon
-
-Edit Docker configuration (on macOS, use Docker Desktop settings):
-
-```json
-{
-  "insecure-registries": ["localhost:3000"]
-}
-```
-
-Restart Docker after configuration.
-
-### 2. Start Services
+## Quick start
 
 ```bash
-# Build and start all services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# View specific service logs
-docker-compose logs -f web-ui
-docker-compose logs -f registry
+# Docker Desktop → Settings → Docker Engine: "insecure-registries": ["localhost:5001"]
+DOCKERY_ADMIN_PASSWORD='change-me' docker compose up --build -d
+open http://localhost:5001      # log in as admin / change-me
 ```
 
-### 3. Access Web UI
+`DOCKERY_ADMIN_PASSWORD` only takes effect on first boot against an empty `/data`. Add your own reverse proxy for TLS (M4 will bundle it).
 
-Open browser: http://localhost:3000
-
-### 4. Push Images to Registry
+### Push an image
 
 ```bash
-# Tag image
-docker tag your-image:tag localhost:3000/your-image:tag
-
-# Push image (through nginx proxy)
-docker push localhost:3000/your-image:tag
+docker login localhost:5001
+docker tag hello-world localhost:5001/demo/hello:1
+docker push localhost:5001/demo/hello:1
 ```
 
-### 5. Pull Images
+## User & permission management
+
+**Web UI (admin menu → Manage users)** — create users, edit role, reset password, enable/disable, delete, and manage per-user repo patterns in a drawer for `write` / `view` accounts. Users with the `view` role don't see the tag-delete button. Everyone can self-service password change via the avatar menu.
+
+**CLI fallback** (no HTTP server required):
 
 ```bash
-# Pull from registry
-docker pull localhost:3000/your-image:tag
+docker exec -it dockery dockery-api -conf /etc/dockery user list
+docker exec -it dockery dockery-api -conf /etc/dockery user create alice write
+docker exec -it dockery dockery-api -conf /etc/dockery user grant  alice 'alice/*,shared/app'
+docker exec -it dockery dockery-api -conf /etc/dockery user passwd alice
+docker exec -it dockery dockery-api -conf /etc/dockery user revoke 42       # permission id
+docker exec -it dockery dockery-api -conf /etc/dockery user delete alice
 ```
 
-## Management Commands
-
-### Stop Services
-```bash
-docker-compose down
-```
-
-### Stop and Remove Data
-```bash
-docker-compose down -v
-```
-
-### Rebuild UI
-```bash
-docker-compose build web-ui
-docker-compose up -d web-ui
-```
-
-### View Service Status
-```bash
-docker-compose ps
-```
+Deleting or demoting the last admin is refused.
 
 ## Configuration
 
-### Registry Configuration
+### Environment
 
-Environment variables in `docker-compose.yaml`:
+| Variable | Default | Purpose |
+|---|---|---|
+| `DOCKERY_ADMIN_USERNAME` | `admin` | First-boot admin username |
+| `DOCKERY_ADMIN_PASSWORD` | _required on first boot_ | First-boot admin password |
+| `REGISTRY_AUTH_TOKEN_REALM` | `http://localhost:5001/token` | URL the docker CLI reaches for tokens; must match your external URL |
+| `REGISTRY_STORAGE_*` | — | Forwarded to distribution to switch storage backends |
 
-```yaml
-registry:
-  environment:
-    REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /var/lib/registry
-    REGISTRY_STORAGE_DELETE_ENABLED: 'true'
+Token TTL, issuer, session cookies, etc. live in `docker/rootfs/etc/dockery/config.yaml` (baked into the image). To customize, mount your own over `/etc/dockery/`.
+
+### Persistence
+
+```
+/data/
+├── registry/          image blobs
+├── db/dockery.db      SQLite (users / repo_permissions / audit_log)
+└── config/
+    ├── jwt-private.pem  Ed25519 private key (0600) — single source of truth
+    └── jwt-jwks.json    JWKS derived from the private key on every boot
 ```
 
-### Web UI Configuration
+**Back up `/data` as a whole.** Lose `jwt-private.pem` → all issued tokens are void; lose `dockery.db` → user table reset.
 
-The UI uses environment variables for configuration:
+## Architecture
 
-```yaml
-web-ui:
-  environment:
-    - REGISTRY_URL=http://registry:5000
+```
+           external :5001 (host → :5000 container)
+                       │
+                   [ nginx ]
+    ┌────────────┬────────┬────────────┐
+    │            │        │            │
+   / static   /token   /api/*        /v2/*
+    │            │        │            │
+ web-ui    dockery-api :3001   distribution :5001
+                 │                    ▲
+                 ├── SQLite           │
+                 ├── jwt-private.pem  │
+                 └── jwt-jwks.json ───┘  registry verifies via JWKS
 ```
 
-You can customize the registry URL without rebuilding the image.
+Three in-container processes managed by supervisord. Full design in [`docs/dockery-design.md`](./docs/dockery-design.md) (Chinese).
 
-### Nginx Configuration
-
-The nginx configuration uses templates with environment variable substitution:
-
-- Template file: `web-ui/nginx.conf.template`
-- Uses `${REGISTRY_URL}` for dynamic configuration
-- Automatically processed on container startup
-
-## Web UI Features
-
-### Image Management
-- ✅ Browse all images and tags
-- ✅ View image details (size, creation time, architecture)
-- ✅ View complete image configuration (Cmd, Env, Labels, Ports)
-- ✅ View image layer history
-- ✅ Sort by tag, size, or creation time
-- ✅ Copy Docker pull commands
-- ✅ Delete image tags (with confirmation dialog)
-- ✅ Responsive design, mobile-friendly
-
-### Technical Details
-- **Framework**: React 19 + TypeScript
-- **Build Tool**: Vite
-- **UI Components**: shadcn/ui + Tailwind CSS
-- **State Management**: Valtio
-- **HTTP Server**: Nginx (Alpine)
-
-## Troubleshooting
-
-### UI Cannot Connect to Registry
-
-1. Check if services are running: `docker-compose ps`
-2. Check network connection: `docker network inspect dockery-net`
-3. View UI logs: `docker-compose logs web-ui`
-4. View Registry logs: `docker-compose logs registry`
-
-### Cannot Push Images
-
-1. Ensure Docker daemon is configured with insecure registry:
-   ```json
-   {
-     "insecure-registries": ["localhost:3000"]
-   }
-   ```
-2. Restart Docker daemon
-3. Verify the registry is accessible: `curl http://localhost:3000/v2/`
-
-### Delete Function Not Working
-
-Ensure Registry has delete enabled (already configured in docker-compose.yaml):
-```yaml
-REGISTRY_STORAGE_DELETE_ENABLED: 'true'
-```
-
-## Production Deployment
-
-### 1. Use HTTPS
-
-Configure SSL certificates:
-
-```yaml
-web-ui:
-  ports:
-    - "443:443"
-  volumes:
-    - ./ssl:/etc/nginx/ssl
-```
-
-Update nginx configuration to use SSL.
-
-### 2. Add Authentication
-
-Configure Registry authentication (Basic Auth or Token Auth).
-
-### 3. Configure Storage Backend
-
-Use cloud storage (S3, Azure Blob, etc.) instead of local filesystem:
-
-```yaml
-registry:
-  environment:
-    REGISTRY_STORAGE: s3
-    REGISTRY_STORAGE_S3_BUCKET: your-bucket
-    REGISTRY_STORAGE_S3_REGION: us-east-1
-```
-
-### 4. Set Resource Limits
-
-```yaml
-web-ui:
-  deploy:
-    resources:
-      limits:
-        cpus: '1'
-        memory: 512M
-```
-
-## Development
-
-### Run UI in Development Mode
+## Local development
 
 ```bash
-cd web-ui
-pnpm install
-pnpm run dev
+# Frontend (:5173)
+cd apps/web-ui && pnpm install && pnpm dev
+
+# Backend (:5001)
+cd apps/api && make run
+
+# Bare registry (:5000) for the frontend's /v2 proxy
+docker run -p 5000:5000 distribution/distribution:3.1.0
 ```
 
-Then access: http://localhost:5173
+## Release
 
-### Build UI
-
-```bash
-cd web-ui
-pnpm run build
-```
-
-## Environment Variables
-
-### Registry
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY` | `/var/lib/registry` | Storage directory |
-| `REGISTRY_STORAGE_DELETE_ENABLED` | `true` | Enable delete operations |
-
-### Web UI
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `REGISTRY_URL` | `http://registry:5000` | Registry backend URL |
+Push a `v*` tag → GitHub Actions builds and pushes `ghcr.io/<owner>/<repo>:<version>` and `:latest` (linux/amd64 + linux/arm64). One image, no `-ui` split.
 
 ## License
 
-See [LICENSE](LICENSE) file for details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Support
-
-If you encounter any issues, please create an issue on GitHub.
+See [LICENSE](LICENSE). Contributions welcome — please open an issue or discussion first for larger changes.

@@ -8,6 +8,7 @@ import { ChevronLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatBinarySize } from '@/utils';
 import { toast } from 'sonner';
+import { currentUserViewModel } from '@/hooks/use-current-user';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,6 +24,9 @@ export default function TagList() {
   const { image } = useParams<{ image: string }>();
   const vm = useViewModel(TagListViewModel, { destroyOnUnmount: true });
   const snapshot = vm.$useSnapshot();
+  const meSnap = useViewModel(currentUserViewModel).$useSnapshot();
+  // Role `view` can only pull; hide the delete button to match server policy.
+  const canDelete = meSnap.user?.role === 'admin' || meSnap.user?.role === 'write';
 
   useEffect(() => {
     const decodedImage = decodeURIComponent(image || '');
@@ -106,13 +110,15 @@ export default function TagList() {
                   >
                     Detail
                   </button>
-                  <button
-                    onClick={() => vm.openDeleteDialog(tagInfo)}
-                    className="text-destructive hover:underline text-sm font-medium"
-                    title="Delete this tag"
-                  >
-                    Delete
-                  </button>
+                  {canDelete && (
+                    <button
+                      onClick={() => vm.openDeleteDialog(tagInfo)}
+                      className="text-destructive hover:underline text-sm font-medium"
+                      title="Delete this tag"
+                    >
+                      Delete
+                    </button>
+                  )}
                 </div>
               </td>
             </tr>

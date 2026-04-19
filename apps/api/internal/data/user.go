@@ -73,6 +73,10 @@ func (r *userRepo) Count(ctx context.Context) (int, error) {
 	return r.data.DB().User.Query().Count(ctx)
 }
 
+func (r *userRepo) CountByRole(ctx context.Context, role string) (int, error) {
+	return r.data.DB().User.Query().Where(user.RoleEQ(user.Role(role))).Count(ctx)
+}
+
 func (r *userRepo) SetPassword(ctx context.Context, id int, passwordHash string) error {
 	return r.data.DB().User.UpdateOneID(id).SetPasswordHash(passwordHash).Exec(ctx)
 }

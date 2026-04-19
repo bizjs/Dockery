@@ -126,10 +126,23 @@ func (s *UserService) Update(ctx *router.Context) error {
 	}
 	if req.Role != nil {
 		if err := s.users.SetRole(ctx.Context(), id, *req.Role); err != nil {
-			return response.ErrBadRequest.WithMessage(err.Error())
+			switch {
+			case errors.Is(err, biz.ErrUserNotFound):
+				return response.ErrNotFound
+			case errors.Is(err, biz.ErrLastAdmin):
+				return response.ErrBadRequest.WithMessage("cannot demote the last admin")
+			case errors.Is(err, biz.ErrInvalidRole):
+				return response.ErrBadRequest.WithMessage("invalid role")
+			}
+			return response.ErrInternal.WithCause(err)
 		}
 	}
 	if req.Disabled != nil {
+		// Admin disabling themselves would lock the UI out on the next
+		// request; reject before it reaches the DB.
+		if *req.Disabled && id == sessionUserID(ctx) {
+			return response.ErrBadRequest.WithMessage("cannot disable your own account")
+		}
 		if err := s.users.SetDisabled(ctx.Context(), id, *req.Disabled); err != nil {
 			return response.ErrInternal.WithCause(err)
 		}
@@ -141,21 +154,23 @@ func (s *UserService) Update(ctx *router.Context) error {
 	return ctx.Success(toUserView(u))
 }
 
-// Delete — admin-only. Cascades repo_permissions (ent edge).
-// TODO(M3): refuse to delete the last admin so the system can't lock itself out.
+// Delete — admin-only. Cascades repo_permissions (ent edge). Refuses to
+// delete the caller's own account (common footgun) and refuses to delete
+// the last remaining admin account (enforced in biz.UserUsecase.Delete).
 func (s *UserService) Delete(ctx *router.Context) error {
 	id, err := userIDFromPath(ctx)
 	if err != nil {
 		return err
 	}
-	// Prevent admins from deleting themselves — avoids the common
-	// footgun of losing the only admin account via a double-click.
 	if id == sessionUserID(ctx) {
 		return response.ErrBadRequest.WithMessage("cannot delete your own account")
 	}
 	if err := s.users.Delete(ctx.Context(), id); err != nil {
-		if errors.Is(err, biz.ErrUserNotFound) {
+		switch {
+		case errors.Is(err, biz.ErrUserNotFound):
 			return response.ErrNotFound
+		case errors.Is(err, biz.ErrLastAdmin):
+			return response.ErrBadRequest.WithMessage("cannot delete the last admin")
 		}
 		return response.ErrInternal.WithCause(err)
 	}

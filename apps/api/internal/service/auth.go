@@ -37,11 +37,13 @@ type LoginRequest struct {
 }
 
 type LoginResponse struct {
+	ID       int    `json:"id"`
 	Username string `json:"username"`
 	Role     string `json:"role"`
 }
 
 type MeResponse struct {
+	ID       int    `json:"id"`
 	Username string `json:"username"`
 	Role     string `json:"role"`
 }
@@ -70,7 +72,7 @@ func (s *AuthService) Login(ctx *router.Context) error {
 	sess.Set(sessKeyUsername, user.Username)
 	sess.Set(sessKeyRole, user.Role)
 
-	return ctx.Success(LoginResponse{Username: user.Username, Role: user.Role})
+	return ctx.Success(LoginResponse{ID: user.ID, Username: user.Username, Role: user.Role})
 }
 
 // Logout clears the session values. The cookie itself lives on until
@@ -97,11 +99,13 @@ func (s *AuthService) Me(ctx *router.Context) error {
 	if sess == nil {
 		return response.ErrUnauthorized
 	}
+	idVal, _ := sess.Get(sessKeyUserID)
+	id, _ := idVal.(int)
 	name, _ := sess.Get(sessKeyUsername)
 	role, _ := sess.Get(sessKeyRole)
 	nameStr, _ := name.(string)
 	roleStr, _ := role.(string)
-	return ctx.Success(MeResponse{Username: nameStr, Role: roleStr})
+	return ctx.Success(MeResponse{ID: id, Username: nameStr, Role: roleStr})
 }
 
 // sessionUserID returns the authenticated user's id from the session,

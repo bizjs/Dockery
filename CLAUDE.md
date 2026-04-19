@@ -1,64 +1,129 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code working in this repository.
+
+> Authoritative design reference: [`docs/dockery-design.md`](./docs/dockery-design.md). This file summarizes; the design doc is source of truth.
 
 ## Repository layout
 
-- `web-ui/` — the active React frontend (this is where almost all development happens).
-- `docker-compose.yaml` / `docker-compose.ghcr.yml` — two-container stack: `distribution/distribution:3.0.0` (registry) + `web-ui` behind nginx. Only port 3000 is exposed; the registry is internal-only and reached via nginx proxy at `/v2/`.
-- `.github/workflows/build-and-push.yml` — builds the web-ui Docker image and pushes to `ghcr.io/<owner>/<repo>-ui` on tags matching `v*`. Multi-arch (`linux/amd64,linux/arm64`).
-- `docker-registry-ui/` — vendored copy of Joxit's docker-registry-ui project (reference only, **not** the shipped UI). Do not edit unless the task specifically targets it.
-- `auth/` — empty placeholder for future auth-service work.
+- `apps/web-ui/` — React 19 + TypeScript SPA (Vite / rolldown-vite, Tailwind v4, shadcn/ui, React Router v7). All browser code lives here.
+- `apps/api/` — Go 1.25 + Kratos v2 + [kratoscarf](https://github.com/bizjs/kratoscarf) backend. Single static binary (`dockery-api`). ent ORM on SQLite (`modernc.org/sqlite`, no CGO).
+- `docker/` — `Dockerfile` (four-stage: ui-builder / api-builder / registry-src / runtime) and `rootfs/` (nginx, supervisord, registry `config.yml`, api `config.yaml` dropped into the container image).
+- `docker-compose.yaml` — single-service `dockery` built from `docker/Dockerfile`. Binds host `:5001` → container `:5000`.
+- `docs/dockery-design.md` — authoritative design doc (CN).
+- `docs/distribution-analysis.md` — upstream Distribution Registry behavior reference.
+- `.github/workflows/build-and-push.yml` — builds & pushes `ghcr.io/<owner>/<repo>` on `v*` tags (multi-arch: `linux/amd64,linux/arm64`).
 
-## Common commands (run from `web-ui/`)
+Not in repo yet (planned): pnpm workspace root, `docker-compose.dev.yaml`, `docker-compose.ghcr.yml`.
+
+## Common commands
+
+**Frontend** (run from `apps/web-ui/`):
 
 ```bash
 pnpm install
-pnpm dev              # Vite dev server on :5173, proxies /v2 → http://localhost:4999
-pnpm build            # tsc -b && vite build — the typecheck step is the canonical one
-pnpm lint             # eslint .
-pnpm test             # vitest (jsdom, globals, setup in src/__tests__/setup.ts)
-pnpm test -- <file>   # run a single test file
-pnpm test:ui          # vitest UI
-pnpm test:coverage    # v8 coverage
-pnpm ui               # shadcn CLI for adding components
+pnpm dev              # Vite on :5173; proxies /api /token → :5001, /v2 → :5000
+pnpm build            # tsc -b && vite build
+pnpm lint
+pnpm test             # vitest (jsdom)
+pnpm ui               # shadcn CLI
 ```
 
-Full-stack bring-up: `docker-compose up -d` from repo root, then open http://localhost:3000. Docker daemon needs `"insecure-registries": ["localhost:3000"]` for push/pull to work.
+**Backend** (run from `apps/api/`):
 
-## Architecture
+```bash
+make init             # go mod download + tool installs
+make api              # regenerate ent / wire (only after schema edits)
+make run              # dockery-api -conf ./configs (HTTP on :5001)
+go test ./...
 
-### Container topology
+# One-shot user management (no HTTP server):
+./bin/dockery-api -conf ./configs user list
+./bin/dockery-api -conf ./configs user create alice write
+./bin/dockery-api -conf ./configs user grant  alice 'alice/*,shared/app'
+./bin/dockery-api -conf ./configs user passwd alice
+./bin/dockery-api -conf ./configs user revoke 42
+./bin/dockery-api -conf ./configs user delete alice
+```
 
-Two services on the `dockery-net` bridge network:
+**Full stack via compose**:
 
-- `registry` (distribution 3.0.0) — no exposed port; storage at `/var/lib/registry`; `REGISTRY_STORAGE_DELETE_ENABLED=true` is required for the UI's delete feature to work.
-- `web-ui` (nginx:alpine serving the built SPA) — exposes `3000:80`. `nginx.conf.template` uses `envsubst` on startup to inject `${REGISTRY_URL}` (defaults to `http://registry:5000`), then proxies `/v2/` to the registry. Everything else falls through to the SPA via `try_files`. This is why there are no CORS concerns in prod.
+```bash
+DOCKERY_ADMIN_PASSWORD=changeme docker compose up --build -d
+open http://localhost:5001      # first login: admin / changeme
+```
 
-In local `pnpm dev`, the equivalent wiring is in `vite.config.ts` — `/v2` proxies to `http://localhost:4999`. If you run the registry locally for dev, map it to 4999, not 5000.
+Docker daemon needs `"insecure-registries": ["localhost:5001"]` until TLS lands.
 
-### Frontend structure (`web-ui/src/`)
+## Architecture (single container)
 
-- Entry: `main.tsx` → `router.tsx` (React Router v7, `createBrowserRouter`). Routes: `/` (Catalog) and `/tag-list/:image` (TagList), wrapped in `layouts/main`. The `App.tsx` file is Vite's stock scaffold and is **unused** — don't start from it.
-- `services/registry.service.ts` — the business-layer API. Composes manifest + config-blob fetches into an `ImageInfo` object (computes total size as config size + sum of layer sizes; correlates `history[]` with `layers[]` by skipping empty layers).
-- `lib/registry-client/RegistryClient.ts` — thin, typed wrapper over the Docker Registry v2 HTTP API (catalog, tags, manifest, blob, delete). Uses the OCI + Docker distribution `Accept` header set. Deletion is a two-step flow: `HEAD` for digest, then `DELETE /manifests/{digest}`.
-- `services/http.ts` + `services/cache-request.ts` — a separate fetch wrapper with WWW-Authenticate / Bearer token handling and an in-memory response cache keyed by method+URL. Note this coexists with the simpler `fetch`-based `RegistryClient` above; new code should generally go through `registry.service.ts` rather than calling either layer directly.
-- `config/index.ts` — reads `VITE_*` env vars. `registryUrl` falls back to `window.location.origin`, which is what lets the prod build work unchanged when nginx is proxying `/v2/` on the same origin.
+Three long-running processes managed by **supervisord** (PID 1, priorities 10/20/30):
 
-### ViewModel pattern (important)
+1. `dockery-api` (`:3001`) — SQLite at `/data/db/dockery.db`, Ed25519 key at `/data/config/jwt-private.pem`, JWKS at `/data/config/jwt-jwks.json`. Runs first.
+2. `registry` (distribution 3.1.0, `:5001`) — polls for `jwt-jwks.json` (200 ms × ~150, ~30 s timeout) before `exec`, then validates incoming tokens via `auth.token.jwks`.
+3. `nginx` (`:5000` → host `:5001`) — sole public port. Routes:
+   - `/` → static UI (`/usr/share/nginx/html`)
+   - `/api/*`, `/token`, `/healthz`, `/readyz` → `:3001`
+   - `/v2/*` → `:5001`
 
-Pages use a custom Valtio-based OOP state layer at `lib/viewmodel/` (see its `README.md` for full API). Each page has a `view-model.ts` extending `BaseViewModel<State>` with lifecycle hooks (`$onInit`, `$onMounted`, `$onDestroy`, `$onStateChange`, `$onError`) and `$watch` / `$watchMultiple` for property observers. Components consume it via `useViewModel(VMClass)` (per-component instance) or `useViewModel(vmInstance)` (shared singleton) plus `vm.$useSnapshot()` for reactive reads. Update state only through `$updateState({...})` or direct mutation of `this.state.x` — never reassign `this.state`. When adding a new page, follow the `pages/Catalog/` layout: `index.tsx` + `view-model.ts` + child components.
+Two auth paths share one permission model:
+- **Docker CLI**: `docker push` → nginx → registry returns 401 with `WWW-Authenticate: Bearer realm=…/token` → docker hits `/token` (Basic Auth) → dockery-api signs an Ed25519 JWT with scoped `access` claim → registry verifies via JWKS.
+- **Web UI**: browser → nginx → `/api/registry/*` on dockery-api → (session check) → mints short-lived admin-scoped JWT for itself → forwards to `127.0.0.1:5001` → filters catalog by repo patterns before returning.
+
+### Roles
+
+Three roles in the `users` table; `users.role` alone dictates actions (no per-row action list):
+
+| role    | registry:catalog:* | repo actions                     |
+|---------|--------------------|----------------------------------|
+| `admin` | yes                | all, on all repos                |
+| `write` | no                 | pull + push + delete on matched patterns |
+| `view`  | no                 | pull on matched patterns         |
+
+`repo_permissions` stores one row per `(user_id, glob_pattern)`. `admin` bypasses this table.
+
+### Frontend structure (`apps/web-ui/src/`)
+
+- Entry: `main.tsx` → `router.tsx` (React Router v7). Routes: `/login` · `/` (Catalog, AuthGuard) · `/tag-list/:image` · `/admin/users` (AuthGuard `adminOnly`). `App.tsx` is Vite scaffold — **unused**, don't start from it.
+- `services/registry.service.ts` — only entry point for image data; composes manifest + config blob into `ImageInfo`. **Calls `/api/registry/*` (not `/v2/`)**.
+- `services/auth.service.ts`, `services/user.service.ts` — thin `api.*` wrappers over the Go backend.
+- `services/api.ts` — fetch wrapper with kratoscarf envelope `{code, message, data}` unwrap + `ApiError`.
+- `hooks/use-current-user.ts` — singleton `CurrentUserViewModel`; `/me` bootstrap, login/logout mutate state; `AuthGuard` and `UserMenu` observe it.
+- `lib/viewmodel/` — Valtio-based OOP state (see its `README.md`). Each page has `index.tsx` + `view-model.ts`.
+
+### Backend structure (`apps/api/internal/`)
+
+- `conf/` — yaml config schema (`conf.proto` + `dockery.go`).
+- `data/` + `data/ent/` — ent client + repo adapters for User / RepoPermission / AuditLog.
+- `biz/` — usecases: `user`, `permission`, `token` (JWT signing), `keystore` (Ed25519 + JWKS).
+- `service/` — HTTP handlers: `system`, `auth`, `user`, `permission` (stubbed — M3 TODO), `registry` (UI proxy), `token` (Docker CLI realm), `admin` (stubbed — M4 TODO).
+- `server/http.go` — kratoscarf wiring (ErrorEncoder / CORS / Secure / Recovery / RequestID / Validator / ResponseWrapper).
+- `server/routes.go` — three-tier grouping: public / session / session+admin.
+- `server/middleware.go` — `RequireSession`, `RequireAdmin`.
+- `pkg/scope/` — Docker scope parsing + glob matching + role→actions mapping.
+- `cmd/api/main.go` + `user_cmd.go` + `wire_gen.go` — entry point; `user` subcommand dispatches to `user_cmd.go` without starting HTTP.
 
 ### UI conventions
 
-shadcn/ui components live in `components/ui/` and are added via `pnpm ui`. Tailwind v4 is configured through `@tailwindcss/vite` (no `tailwind.config.js`). Path alias `@/` → `src/`. React 19 with `babel-plugin-react-compiler` is enabled. The bundler is `rolldown-vite` (pinned via pnpm override) — if you see `vite:` referenced, it's rolldown-vite under the hood.
+shadcn/ui in `components/ui/` (added via `pnpm ui`). Tailwind v4 via `@tailwindcss/vite` (no `tailwind.config.js`). Path alias `@/` → `src/`. React 19 + `babel-plugin-react-compiler` on. Bundler is `rolldown-vite` (pnpm override).
 
 ## Environment variables
 
-Build-time (Vite, `web-ui/.env*`): `VITE_REGISTRY_URL`, `VITE_CATALOG_ELEMENTS_LIMIT`, `VITE_USE_CONTROL_CACHE_HEADER`, `VITE_SINGLE_REGISTRY`, `VITE_SHOW_CONTENT_DIGEST`, `VITE_SHOW_CATALOG_NB_TAGS`.
+**Runtime (container / compose)**:
+- `DOCKERY_ADMIN_USERNAME` (default `admin`) — first-boot admin account name.
+- `DOCKERY_ADMIN_PASSWORD` (**required on first boot**, otherwise api fatals) — first-boot admin password.
+- `REGISTRY_AUTH_TOKEN_REALM` (default `http://localhost:5001/token`) — URL the docker CLI reaches back to for tokens; must match the external URL of the Dockery deployment.
+- `REGISTRY_STORAGE_*` — passed through to distribution (S3 etc.).
 
-Runtime (nginx container): `REGISTRY_URL` — substituted into `nginx.conf.template` at container start, so you can change the backend without rebuilding the image.
+**Build-time (Vite, `apps/web-ui/.env*`)**: `VITE_REGISTRY_URL` (falls back to `window.location.origin`), plus a few legacy `VITE_*` flags retained for now.
+
+## Progress (see design §11 for detail)
+
+- M1 ✅ skeleton + container + kratoscarf
+- M2 ✅ keys + tokens + users + CLI + registry token auth
+- M3 ⏳ UI session + login + admin/users page — **PermissionService handlers are stubs**; UI can't grant repo patterns yet (only CLI)
+- M4 ⬜ GC / key rotation / audit log writes / README rebrand
 
 ## Release
 
-Tag-driven: pushing a `v*` tag triggers `.github/workflows/build-and-push.yml`, which builds and publishes the web-ui image to GHCR with `latest` and the semver tag. See `docs/GHCR_DEPLOYMENT.md` for the consumer-side instructions.
+Push a `v*` tag → `.github/workflows/build-and-push.yml` builds & pushes `ghcr.io/<owner>/<repo>:latest` + `:<semver>` (multi-arch). No separate `-ui` image — Dockery ships as one image.

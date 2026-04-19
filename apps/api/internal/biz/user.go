@@ -29,6 +29,7 @@ type UserRepo interface {
 	GetByID(ctx context.Context, id int) (*User, error)
 	List(ctx context.Context) ([]*User, error)
 	Count(ctx context.Context) (int, error)
+	CountByRole(ctx context.Context, role string) (int, error)
 	SetPassword(ctx context.Context, id int, passwordHash string) error
 	SetRole(ctx context.Context, id int, role string) error
 	SetDisabled(ctx context.Context, id int, disabled bool) error
@@ -42,6 +43,7 @@ var (
 	ErrAdminPasswordUnset = errors.New("user: admin password required on first launch (set DOCKERY_ADMIN_PASSWORD env or dockery.admin.password in config)")
 	ErrWeakPassword       = errors.New("user: password must be at least 8 characters")
 	ErrInvalidRole        = errors.New("user: role must be one of admin/write/view")
+	ErrLastAdmin          = errors.New("user: cannot demote or delete the last admin account")
 )
 
 // UserUsecase owns password hashing, credential verification, and the
@@ -151,6 +153,19 @@ func (u *UserUsecase) SetRole(ctx context.Context, id int, role string) error {
 	if !isValidRole(role) {
 		return ErrInvalidRole
 	}
+	// Guard: demoting the last admin is refused. Check only on admin→
+	// non-admin transitions; everything else skips the lookup.
+	if role != "admin" {
+		target, err := u.repo.GetByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		if target.Role == "admin" {
+			if err := u.ensureNotLastAdmin(ctx); err != nil {
+				return err
+			}
+		}
+	}
 	return u.repo.SetRole(ctx, id, role)
 }
 
@@ -159,7 +174,30 @@ func (u *UserUsecase) SetDisabled(ctx context.Context, id int, disabled bool) er
 }
 
 func (u *UserUsecase) Delete(ctx context.Context, id int) error {
+	target, err := u.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if target.Role == "admin" {
+		if err := u.ensureNotLastAdmin(ctx); err != nil {
+			return err
+		}
+	}
 	return u.repo.Delete(ctx, id)
+}
+
+// ensureNotLastAdmin refuses the operation if only one admin exists —
+// used before demoting or deleting an admin. The caller must have
+// already confirmed the target is an admin.
+func (u *UserUsecase) ensureNotLastAdmin(ctx context.Context) error {
+	n, err := u.repo.CountByRole(ctx, "admin")
+	if err != nil {
+		return err
+	}
+	if n <= 1 {
+		return ErrLastAdmin
+	}
+	return nil
 }
 
 func isValidRole(r string) bool {

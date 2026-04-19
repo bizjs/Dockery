@@ -38,6 +38,15 @@ func (r *fakeUserRepo) GetByID(_ context.Context, id int) (*biz.User, error) {
 }
 func (r *fakeUserRepo) List(_ context.Context) ([]*biz.User, error) { return r.users, nil }
 func (r *fakeUserRepo) Count(_ context.Context) (int, error)        { return len(r.users), nil }
+func (r *fakeUserRepo) CountByRole(_ context.Context, role string) (int, error) {
+	n := 0
+	for _, u := range r.users {
+		if u.Role == role {
+			n++
+		}
+	}
+	return n, nil
+}
 func (r *fakeUserRepo) SetPassword(_ context.Context, id int, hash string) error {
 	for _, u := range r.users {
 		if u.ID == id {
@@ -165,5 +174,60 @@ func TestCreate_RejectsInvalidRole(t *testing.T) {
 	_, err := u.Create(context.Background(), "alice", "a-strong-password", "superuser")
 	if err != biz.ErrInvalidRole {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSetRole_RefusesLastAdminDemotion(t *testing.T) {
+	repo := &fakeUserRepo{}
+	u := biz.NewUserUsecase(repo)
+	ctx := context.Background()
+	admin, _ := u.Create(ctx, "admin", "a-strong-password", "admin")
+
+	if err := u.SetRole(ctx, admin.ID, "write"); err != biz.ErrLastAdmin {
+		t.Fatalf("want ErrLastAdmin, got %v", err)
+	}
+	if admin.Role != "admin" {
+		t.Fatalf("role changed despite refusal: %s", admin.Role)
+	}
+}
+
+func TestSetRole_AllowsDemotionWhenOtherAdminExists(t *testing.T) {
+	repo := &fakeUserRepo{}
+	u := biz.NewUserUsecase(repo)
+	ctx := context.Background()
+	a1, _ := u.Create(ctx, "a1", "a-strong-password", "admin")
+	_, _ = u.Create(ctx, "a2", "a-strong-password", "admin")
+
+	if err := u.SetRole(ctx, a1.ID, "write"); err != nil {
+		t.Fatalf("demote with >1 admin should succeed, got %v", err)
+	}
+	if a1.Role != "write" {
+		t.Fatalf("role not updated: %s", a1.Role)
+	}
+}
+
+func TestDelete_RefusesLastAdmin(t *testing.T) {
+	repo := &fakeUserRepo{}
+	u := biz.NewUserUsecase(repo)
+	ctx := context.Background()
+	admin, _ := u.Create(ctx, "admin", "a-strong-password", "admin")
+
+	if err := u.Delete(ctx, admin.ID); err != biz.ErrLastAdmin {
+		t.Fatalf("want ErrLastAdmin, got %v", err)
+	}
+	if n, _ := repo.Count(ctx); n != 1 {
+		t.Fatalf("user was deleted despite refusal: count=%d", n)
+	}
+}
+
+func TestDelete_AllowsNonAdmin(t *testing.T) {
+	repo := &fakeUserRepo{}
+	u := biz.NewUserUsecase(repo)
+	ctx := context.Background()
+	_, _ = u.Create(ctx, "admin", "a-strong-password", "admin")
+	bob, _ := u.Create(ctx, "bob", "a-strong-password", "write")
+
+	if err := u.Delete(ctx, bob.ID); err != nil {
+		t.Fatalf("delete non-admin should succeed, got %v", err)
 	}
 }

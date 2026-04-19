@@ -3,6 +3,7 @@ import { api } from './api';
 export type UserRole = 'admin' | 'write' | 'view';
 
 export interface CurrentUser {
+  id: number;
   username: string;
   role: UserRole;
 }
