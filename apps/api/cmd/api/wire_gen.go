@@ -57,7 +57,7 @@ func wireApp(confServer *conf.Server, confData *conf.Data, dockery *conf.Dockery
 	authService := service.NewAuthService(userUsecase)
 	userService := service.NewUserService(userUsecase, permissionUsecase)
 	permissionService := service.NewPermissionService(permissionUsecase, userUsecase)
-	registryService := service.NewRegistryService()
+	registryService := service.NewRegistryService(userUsecase, permissionUsecase, tokenIssuer)
 	tokenService := service.NewTokenService(userUsecase, permissionUsecase, tokenIssuer)
 	adminService := service.NewAdminService()
 	services := &service.Services{

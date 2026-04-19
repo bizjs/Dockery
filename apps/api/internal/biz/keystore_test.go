@@ -9,13 +9,18 @@ import (
 	"testing"
 )
 
-func newTestKeystore(t *testing.T) *Keystore {
+func newTestKeystoreConfig(t *testing.T) KeystoreConfig {
 	t.Helper()
 	dir := t.TempDir()
-	ks, err := NewKeystore(KeystoreConfig{
+	return KeystoreConfig{
 		PrivatePath: filepath.Join(dir, "priv.pem"),
-		PublicPath:  filepath.Join(dir, "pub.pem"),
-	})
+		JWKSPath:    filepath.Join(dir, "jwks.json"),
+	}
+}
+
+func newTestKeystore(t *testing.T) *Keystore {
+	t.Helper()
+	ks, err := NewKeystore(newTestKeystoreConfig(t))
 	if err != nil {
 		t.Fatalf("NewKeystore: %v", err)
 	}
@@ -38,37 +43,22 @@ func TestKeystore_GeneratesOnFirstRun(t *testing.T) {
 	}
 }
 
-func TestKeystore_FilePermissions(t *testing.T) {
-	dir := t.TempDir()
-	priv := filepath.Join(dir, "priv.pem")
-	pub := filepath.Join(dir, "pub.pem")
-	_, err := NewKeystore(KeystoreConfig{PrivatePath: priv, PublicPath: pub})
-	if err != nil {
+func TestKeystore_PrivateFilePermissions(t *testing.T) {
+	cfg := newTestKeystoreConfig(t)
+	if _, err := NewKeystore(cfg); err != nil {
 		t.Fatalf("NewKeystore: %v", err)
 	}
-
-	st, err := os.Stat(priv)
+	st, err := os.Stat(cfg.PrivatePath)
 	if err != nil {
 		t.Fatalf("stat priv: %v", err)
 	}
 	if m := st.Mode().Perm(); m != fs.FileMode(0o600) {
 		t.Errorf("priv perm = %o, want 0600", m)
 	}
-	st, err = os.Stat(pub)
-	if err != nil {
-		t.Fatalf("stat pub: %v", err)
-	}
-	if m := st.Mode().Perm(); m != fs.FileMode(0o644) {
-		t.Errorf("pub perm = %o, want 0644", m)
-	}
 }
 
 func TestKeystore_Reloads(t *testing.T) {
-	dir := t.TempDir()
-	cfg := KeystoreConfig{
-		PrivatePath: filepath.Join(dir, "priv.pem"),
-		PublicPath:  filepath.Join(dir, "pub.pem"),
-	}
+	cfg := newTestKeystoreConfig(t)
 	first, err := NewKeystore(cfg)
 	if err != nil {
 		t.Fatalf("first NewKeystore: %v", err)
@@ -80,31 +70,15 @@ func TestKeystore_Reloads(t *testing.T) {
 	if first.KID() != second.KID() {
 		t.Fatalf("KID changed on reload: %s != %s", first.KID(), second.KID())
 	}
-	if !bytesEq(first.Public(), second.Public()) {
-		t.Fatalf("public key changed on reload")
+	// Public derives from the same private → must be byte-identical.
+	a, b := first.Public(), second.Public()
+	if len(a) != len(b) {
+		t.Fatalf("public length drift: %d vs %d", len(a), len(b))
 	}
-}
-
-func TestKeystore_DetectsKeyMismatch(t *testing.T) {
-	dir := t.TempDir()
-	priv := filepath.Join(dir, "priv.pem")
-	pub := filepath.Join(dir, "pub.pem")
-
-	// Seed a valid pair.
-	if _, err := NewKeystore(KeystoreConfig{PrivatePath: priv, PublicPath: pub}); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	// Overwrite the public key with a different one.
-	pub2, _, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatalf("gen: %v", err)
-	}
-	if err := writePublicPEM(pub, pub2); err != nil {
-		t.Fatalf("overwrite pub: %v", err)
-	}
-
-	if _, err := NewKeystore(KeystoreConfig{PrivatePath: priv, PublicPath: pub}); err == nil {
-		t.Fatal("expected mismatch error, got nil")
+	for i := range a {
+		if a[i] != b[i] {
+			t.Fatalf("public key byte drift at %d", i)
+		}
 	}
 }
 

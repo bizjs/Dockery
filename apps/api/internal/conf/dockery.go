@@ -17,11 +17,18 @@ type Dockery struct {
 }
 
 // DockeryKeystore is the filesystem location of the Ed25519 signing
-// keypair Dockery API uses to sign registry JWTs and Distribution
-// Registry uses to verify them.
+// key. The private key is the single source of truth; the public key
+// is derived at runtime and exposed to distribution registry as a
+// JWKS file (RFC 7517 / RFC 8037), not a raw PEM.
+//
+// JWKS is used instead of rootcertbundle because distribution v3
+// accepts only X.509 CERTIFICATE PEM blocks there, silently ignoring
+// bare PUBLIC KEY blocks.
 type DockeryKeystore struct {
 	PrivatePath string `json:"private_path" yaml:"private_path"`
-	PublicPath  string `json:"public_path"  yaml:"public_path"`
+	// JWKSPath is where Keystore writes the JSON Web Key Set that the
+	// distribution registry reads as `auth.token.jwks`.
+	JWKSPath string `json:"jwks_path" yaml:"jwks_path"`
 }
 
 // DockeryToken pins the JWT issuance parameters. Issuer + Audience MUST

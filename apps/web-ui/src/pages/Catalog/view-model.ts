@@ -53,7 +53,9 @@ export class CatalogViewModel extends BaseViewModel<ViewState> implements ViewMo
         error: null,
       });
 
-      const repos = await listRepositories(1000, '');
+      // Server filters by the current user's role + repo_permissions;
+      // no client-side pagination params — dockery-api handles /v2/_catalog.
+      const repos = await listRepositories();
 
       this.$updateState({
         repositories: repos,

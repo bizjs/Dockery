@@ -557,7 +557,7 @@ ports:
 - **M2.2** ✅ 密钥 (Ed25519) + Token 签发 (JWT/EdDSA) + Scope 匹配（role→actions） —— 全层单测覆盖
 - **M2.3** ✅ 用户初始化 (EnsureAdmin + bcrypt) + CLI 管理命令 (`user list/create/passwd/grant/revoke/delete`) + `/token` handler 真实签发 JWT + `/api/auth/login` 真实验证
 - **M2.4** ⏳ Registry 切 token auth（`auth.token` 段启用、`rootcertbundle` 指 `/data/config/jwt-public.pem`、`REGISTRY_AUTH_TOKEN_REALM` 由 env 覆盖） —— 等你跑一次 docker login 端到端验证
-- **M3**   ⬜ UI 接入与权限化
+- **M3**   ⏳ UI 接入与权限化 —— 本轮推进：用 kratoscarf `auth/session` 做 server-side cookie session；后端 RequireSession / RequireAdmin 实装；Auth Login/Me/Logout + User List/Create/Get/Update/Delete/SetPassword 全部 handler 真实；前端登录页 + 路由守卫 + 用户管理页 + Header user menu
 - **M4**   ⬜ 打磨与发布
 
 

@@ -1,19 +1,17 @@
 /**
- * Docker Registry API Client
- * 封装所有 Docker Registry v2 API 接口
+ * Registry data access — all calls go through dockery-api at
+ * /api/registry/*, NOT straight to /v2/*. dockery-api is responsible
+ * for:
+ *   - session-based authentication (HttpOnly cookie)
+ *   - per-user repo_permissions filtering (catalog, tags)
+ *   - minting short-lived JWTs for the upstream registry
+ *   - two-step delete (tag → digest → DELETE)
+ *
+ * The UI therefore never needs to know about Docker token auth.
  */
 
-import { config } from '@/config';
-import { RegistryClient } from '@/lib/registry-client/RegistryClient';
+import { api } from './api';
 
-/**
- * 默认的 Registry Client 实例
- */
-const registryClient = new RegistryClient(config.registryUrl);
-
-/**
- * 业务层封装：获取镜像的完整信息
- */
 export interface ImageInfo {
   imageName: string;
   tag: string;
@@ -23,7 +21,6 @@ export interface ImageInfo {
   architecture?: string;
   os?: string;
   layers: number;
-  // 完整的配置信息
   id?: string;
   cmd?: string[];
   env?: string[];
@@ -40,16 +37,70 @@ export interface ImageInfo {
   }>;
 }
 
-/**
- * 获取镜像的完整信息
- */
-export async function getImageInfo(repository: string, tag: string): Promise<ImageInfo> {
-  // 获取 manifest
-  const manifestResponse = await registryClient.getManifest(repository, tag);
-  const manifest = manifestResponse.data;
-  const digest = manifestResponse.headers.get('Docker-Content-Digest') || '';
+interface CatalogResponse {
+  repositories?: string[];
+}
 
-  // 获取 config blob
+interface TagsResponse {
+  name: string;
+  tags?: string[];
+}
+
+// --- Manifest shapes returned by /api/registry/{name}/manifests/{ref} ---
+
+interface ManifestV2 {
+  schemaVersion?: number;
+  mediaType?: string;
+  config?: { mediaType?: string; size?: number; digest?: string };
+  layers?: Array<{ mediaType?: string; size?: number; digest?: string }>;
+}
+
+interface ConfigBlob {
+  id?: string;
+  created?: string;
+  architecture?: string;
+  os?: string;
+  config?: {
+    Cmd?: string[];
+    Env?: string[];
+    WorkingDir?: string;
+    Labels?: Record<string, string>;
+    ExposedPorts?: Record<string, unknown>;
+  };
+  history?: Array<{
+    created?: string;
+    created_by?: string;
+    comment?: string;
+    empty_layer?: boolean;
+  }>;
+}
+
+/** List repositories visible to the current session user. */
+export async function listRepositories(): Promise<{ repo: string; tags: string[] }[]> {
+  const { repositories = [] } = await api.get<CatalogResponse>('/api/registry/catalog');
+  // Fetch tags for each repo in parallel; UI wants tagCount on the
+  // catalog card anyway.
+  const results = await Promise.all(
+    repositories.map(async (repo) => {
+      try {
+        const { tags = [] } = await api.get<TagsResponse>(
+          `/api/registry/${encodeURIComponent(repo)}/tags`,
+        );
+        return { repo, tags };
+      } catch {
+        return { repo, tags: [] };
+      }
+    }),
+  );
+  return results;
+}
+
+/** Fetch full ImageInfo (manifest + config blob) for one tag. */
+export async function getImageInfo(repository: string, tag: string): Promise<ImageInfo> {
+  const manifest = await api.get<ManifestV2>(
+    `/api/registry/${encodeURIComponent(repository)}/manifests/${encodeURIComponent(tag)}`,
+  );
+
   let created: string | undefined;
   let architecture: string | undefined;
   let os: string | undefined;
@@ -61,66 +112,62 @@ export async function getImageInfo(repository: string, tag: string): Promise<Ima
   let exposedPorts: string[] | undefined;
   let history: ImageInfo['history'] | undefined;
 
-  if (manifest.config?.digest) {
+  const configDigest = manifest.config?.digest;
+  if (configDigest) {
     try {
-      const configResponse = await registryClient.getConfigBlob(repository, manifest.config.digest);
-      const configData = configResponse.data;
-      
-      created = configData.created;
-      architecture = configData.architecture;
-      os = configData.os;
-      id = configData.id;
-      cmd = configData.config?.Cmd;
-      env = configData.config?.Env;
-      workingDir = configData.config?.WorkingDir;
-      labels = configData.config?.Labels;
-      
-      // 处理 ExposedPorts
-      if (configData.config?.ExposedPorts) {
-        exposedPorts = Object.keys(configData.config.ExposedPorts);
+      const cfg = await api.get<ConfigBlob>(
+        `/api/registry/${encodeURIComponent(repository)}/blobs/${encodeURIComponent(configDigest)}`,
+      );
+      created = cfg.created;
+      architecture = cfg.architecture;
+      os = cfg.os;
+      id = cfg.id;
+      cmd = cfg.config?.Cmd;
+      env = cfg.config?.Env;
+      workingDir = cfg.config?.WorkingDir;
+      labels = cfg.config?.Labels;
+      if (cfg.config?.ExposedPorts) {
+        exposedPorts = Object.keys(cfg.config.ExposedPorts);
       }
-      
-      // 处理 history，并关联 layer 大小
-      if (configData.history && manifest.layers) {
-        let layerIndex = 0;
-        history = configData.history.map((h) => {
-          const historyItem: NonNullable<ImageInfo['history']>[number] = {
+
+      if (cfg.history && manifest.layers) {
+        let li = 0;
+        history = cfg.history.map((h) => {
+          const entry: NonNullable<ImageInfo['history']>[number] = {
             created: h.created,
             created_by: h.created_by,
             comment: h.comment,
             empty_layer: h.empty_layer,
           };
-          
-          // 如果不是空层，关联对应的 layer 信息
-          if (!h.empty_layer && manifest.layers && layerIndex < manifest.layers.length) {
-            const layer = manifest.layers[layerIndex];
-            historyItem.size = layer.size;
-            historyItem.id = layer.digest;
-            layerIndex++;
+          if (!h.empty_layer && manifest.layers && li < manifest.layers.length) {
+            const layer = manifest.layers[li];
+            entry.size = layer.size;
+            entry.id = layer.digest;
+            li++;
           }
-          
-          return historyItem;
+          return entry;
         });
       }
-    } catch (error) {
-      console.error('Failed to fetch config blob:', error);
+    } catch (err) {
+      console.warn('config blob fetch failed:', err);
     }
   }
 
-  // 计算镜像总大小：config size + 所有 layers 的 size
-  const configSize = manifest.config?.size || 0;
-  const layersSize = manifest.layers?.reduce((total, layer) => total + (layer.size || 0), 0) || 0;
-  const totalSize = configSize + layersSize;
+  const configSize = manifest.config?.size ?? 0;
+  const layersSize = (manifest.layers ?? []).reduce((s, l) => s + (l.size ?? 0), 0);
 
   return {
     imageName: repository,
     tag,
-    digest,
-    size: totalSize,
+    // Docker-Content-Digest is set as a response header by the proxy
+    // but we don't surface it through the envelope — the delete flow
+    // resolves digest server-side from the tag, so UI rarely needs it.
+    digest: '',
+    size: configSize + layersSize,
     created,
     architecture,
     os,
-    layers: manifest.layers?.length || 0,
+    layers: manifest.layers?.length ?? 0,
     id,
     cmd,
     env,
@@ -131,64 +178,33 @@ export async function getImageInfo(repository: string, tag: string): Promise<Ima
   };
 }
 
-/**
- * 批量获取标签信息
- */
-export async function getTagsInfo(repository: string, tags: string[]): Promise<ImageInfo[]> {
-  const promises = tags.map((tag) => getImageInfo(repository, tag));
-  return Promise.all(promises);
-}
-
-/**
- * 搜索仓库
- */
-export async function listRepositories(size: number, last: string): Promise<{ repo: string; tags: string[] }[]> {
-  const response = await registryClient.listRepositories({ n: size, last });
-  const repositories = response.data.repositories || [];
-
-  const result: { repo: string; tags: string[] }[] = repositories.map((x) => ({ repo: x, tags: [] }));
-
-  await Promise.all(
-    result.map(async (repo) => {
-      const res = await registryClient.listTags(repo.repo);
-      repo.tags = res.data.tags || [];
-      return repo;
+/** Fetch every tag's ImageInfo for a repo. */
+export async function listImageTags(imageName: string): Promise<ImageInfo[]> {
+  const { tags = [] } = await api.get<TagsResponse>(
+    `/api/registry/${encodeURIComponent(imageName)}/tags`,
+  );
+  const infos = await Promise.all(
+    tags.map(async (tag) => {
+      try {
+        return await getImageInfo(imageName, tag);
+      } catch (err) {
+        console.warn(`failed to fetch info for ${imageName}:${tag}`, err);
+        return {
+          imageName,
+          tag,
+          digest: '',
+          size: 0,
+          layers: 0,
+        } satisfies ImageInfo;
+      }
     }),
   );
-  return result;
+  return infos;
 }
 
-export async function listImageTags(imageName: string) {
-  const tagsResponse = await registryClient.listTags(imageName);
-  const tags = tagsResponse.data.tags || [];
-
-  console.log('Received tags:', tags.length);
-
-  // 批量获取每个标签的详细信息
-  const tagInfoPromises = tags.map(async (tag) => {
-    try {
-      return await getImageInfo(imageName, tag);
-    } catch (err) {
-      console.error(`Failed to fetch info for tag ${tag}:`, err);
-      // 返回基本信息
-      return {
-        imageName: imageName,
-        tag,
-        digest: '',
-        size: 0,
-        layers: 0,
-      } as ImageInfo;
-    }
-  });
-
-  const tagInfos = await Promise.all(tagInfoPromises);
-
-  return tagInfos;
-}
-
-/**
- * 删除镜像标签
- */
+/** Delete a tag (server resolves digest and issues DELETE by digest). */
 export async function deleteImageTag(repository: string, tag: string): Promise<void> {
-  await registryClient.deleteTag(repository, tag);
+  await api.delete<null>(
+    `/api/registry/${encodeURIComponent(repository)}/manifests/${encodeURIComponent(tag)}`,
+  );
 }

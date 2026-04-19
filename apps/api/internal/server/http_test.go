@@ -62,7 +62,7 @@ func newHarness(t *testing.T) *harness {
 	keyDir := filepath.Join(t.TempDir(), "keys")
 	ks, err := biz.NewKeystore(biz.KeystoreConfig{
 		PrivatePath: filepath.Join(keyDir, "priv.pem"),
-		PublicPath:  filepath.Join(keyDir, "pub.pem"),
+		JWKSPath:    filepath.Join(keyDir, "jwks.json"),
 	})
 	if err != nil {
 		t.Fatalf("keystore: %v", err)
@@ -83,7 +83,7 @@ func newHarness(t *testing.T) *harness {
 		Auth:       service.NewAuthService(userUC),
 		User:       service.NewUserService(userUC, permUC),
 		Permission: service.NewPermissionService(permUC, userUC),
-		Registry:   service.NewRegistryService(),
+		Registry:   service.NewRegistryService(userUC, permUC, iss),
 		Token:      service.NewTokenService(userUC, permUC, iss),
 		Admin:      service.NewAdminService(),
 	}
@@ -433,12 +433,11 @@ func TestAdminFlow(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("login want 200, got %d; body=%s", resp.StatusCode, raw)
 	}
-	// Confirm a session cookie was set.
-	if len(resp.Cookies()) == 0 {
-		t.Fatal("expected Set-Cookie after successful login")
-	}
 
-	// /api/auth/me — now authenticated.
+	// /api/auth/me — succeeds only if the session cookie set by login
+	// made it into the cookiejar and back out on this second request.
+	// That's a stronger check than inspecting the Set-Cookie header
+	// directly (which can be obscured by test-server plumbing).
 	resp, raw = h.do(http.MethodGet, "/api/auth/me", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("me want 200, got %d; body=%s", resp.StatusCode, raw)

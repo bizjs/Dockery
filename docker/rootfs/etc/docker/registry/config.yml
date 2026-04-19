@@ -50,6 +50,9 @@ auth:
     realm: http://localhost:5000/token
     service: dockery
     issuer: dockery-api
-    rootcertbundle: /data/config/jwt-public.pem
+    # distribution v3 accepts only CERTIFICATE PEMs in rootcertbundle
+    # and silently drops PUBLIC KEY blocks, so we use jwks instead.
+    # Dockery-api writes this file (RFC 7517 / RFC 8037) on every boot.
+    jwks: /data/config/jwt-jwks.json
     signingalgorithms:
       - EdDSA

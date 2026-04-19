@@ -85,10 +85,10 @@ func TestMatch_RegistryAdminOnly(t *testing.T) {
 	if got := Match(RoleAdmin, nil, sc); !reflect.DeepEqual(got, []string{"*"}) {
 		t.Errorf("admin registry: got %v", got)
 	}
-	if got := Match(RoleWrite, []string{"*"}, sc); got != nil {
+	if got := Match(RoleWrite, []string{"*"}, sc); len(got) != 0 {
 		t.Errorf("write registry: expected nil, got %v", got)
 	}
-	if got := Match(RoleView, []string{"*"}, sc); got != nil {
+	if got := Match(RoleView, []string{"*"}, sc); len(got) != 0 {
 		t.Errorf("view registry: expected nil, got %v", got)
 	}
 }
@@ -122,7 +122,7 @@ func TestMatch_WriteRole(t *testing.T) {
 
 	// no-match — empty
 	sc = Scope{Type: TypeRepository, Name: "bob/app", Actions: []string{"pull"}}
-	if got := Match(RoleWrite, patterns, sc); got != nil {
+	if got := Match(RoleWrite, patterns, sc); len(got) != 0 {
 		t.Errorf("no-match write: got %v", got)
 	}
 }
@@ -140,7 +140,7 @@ func TestMatch_ViewRoleOnlyPull(t *testing.T) {
 		t.Errorf("view pull+push: got %v want [pull]", got)
 	}
 	sc.Actions = []string{"push"}
-	if got := Match(RoleView, patterns, sc); got != nil {
+	if got := Match(RoleView, patterns, sc); len(got) != 0 {
 		t.Errorf("view push only: expected empty, got %v", got)
 	}
 }

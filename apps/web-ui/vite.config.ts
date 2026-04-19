@@ -13,10 +13,12 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/v2': {
-        target: 'http://localhost:4999',
-        changeOrigin: true,
-      },
+      // dockery-api (Go) runs locally via `make run` on :5001
+      '/api': { target: 'http://localhost:5001', changeOrigin: true },
+      // docker CLI token realm — same Go process
+      '/token': { target: 'http://localhost:5001', changeOrigin: true },
+      // Distribution registry runs in docker-compose.dev.yaml on host :4999
+      '/v2': { target: 'http://localhost:5000', changeOrigin: true },
     },
   },
 });

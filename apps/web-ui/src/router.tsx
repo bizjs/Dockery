@@ -1,27 +1,39 @@
 import { createBrowserRouter, Navigate, type RouterNavigateOptions, type To } from 'react-router-dom';
+
 import { MainLayout } from '@/layouts/main';
+import { AuthGuard } from '@/components/common/AuthGuard';
+import { ErrorPage } from '@/components/common';
+
 import Catalog from '@/pages/Catalog';
 import TagList from '@/pages/TagList';
-import { ErrorPage } from '@/components/common';
+import LoginPage from '@/pages/Login';
+import UsersPage from '@/pages/Admin/Users';
 
 export const router = createBrowserRouter([
   {
+    path: '/login',
+    element: <LoginPage />,
+  },
+  {
     path: '/',
-    element: <MainLayout />,
+    element: (
+      <AuthGuard>
+        <MainLayout />
+      </AuthGuard>
+    ),
     errorElement: <ErrorPage />,
     children: [
+      { index: true, element: <Catalog /> },
+      { path: 'tag-list/:image', element: <TagList /> },
       {
-        index: true,
-        element: <Catalog />,
+        path: 'admin/users',
+        element: (
+          <AuthGuard adminOnly>
+            <UsersPage />
+          </AuthGuard>
+        ),
       },
-      {
-        path: 'tag-list/:image',
-        element: <TagList />,
-      },
-      {
-        path: '*',
-        element: <Navigate to="/" replace />,
-      },
+      { path: '*', element: <Navigate to="/" replace /> },
     ],
   },
 ]);

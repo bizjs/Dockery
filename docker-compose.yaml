@@ -18,7 +18,17 @@ services:
     container_name: dockery
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      - 5001:5000
+    environment:
+      # First admin gets created on first boot from this env. Leave the
+      # yaml default empty after provisioning (or change via
+      # `dockery-api user passwd`); rely on a shell env var for secrets.
+      DOCKERY_ADMIN_USERNAME: admin
+      DOCKERY_ADMIN_PASSWORD: '${DOCKERY_ADMIN_PASSWORD:-changeme-on-first-boot}'
+      # Realm URL docker CLI receives in WWW-Authenticate. Must be the
+      # exact host:port the CLI will actually hit. Override for public
+      # deploys, e.g.  REGISTRY_AUTH_TOKEN_REALM=https://registry.example.com/token
+      REGISTRY_AUTH_TOKEN_REALM: '${REGISTRY_AUTH_TOKEN_REALM:-http://localhost:5000/token}'
     volumes:
       - dockery-data:/data
 

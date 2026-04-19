@@ -6,6 +6,8 @@
 import { Outlet, Link } from 'react-router-dom';
 import { Package, ExternalLink } from 'lucide-react';
 
+import { UserMenu } from './UserMenu';
+
 interface MainLayoutProps {
   title?: string;
   registryUrl?: string;
@@ -38,7 +40,9 @@ export function MainLayout({
             </Link>
 
             {/* Navigation Actions */}
-            <div className="flex items-center gap-4">{/* Theme toggle, settings, etc. will go here */}</div>
+            <div className="flex items-center gap-4">
+              <UserMenu />
+            </div>
           </div>
         </div>
       </header>

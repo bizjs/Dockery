@@ -14,7 +14,7 @@ import (
 func NewKeystoreConfigFromConf(c *conf.Dockery) KeystoreConfig {
 	return KeystoreConfig{
 		PrivatePath: c.Keystore.PrivatePath,
-		PublicPath:  c.Keystore.PublicPath,
+		JWKSPath:    c.Keystore.JWKSPath,
 	}
 }
 

@@ -16,7 +16,7 @@ data:
 dockery:
   keystore:
     private_path: /data/config/jwt-private.pem
-    public_path:  /data/config/jwt-public.pem
+    jwks_path:    /data/config/jwt-jwks.json
   token:
     issuer: dockery-api
     audience: dockery
