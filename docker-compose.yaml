@@ -18,6 +18,11 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+      args:
+        # Baked into the UI bundle; required by docker/Dockerfile.
+        # Override with `APP_VERSION=0.1.0 docker compose build` for a
+        # "real" version stamp on local images.
+        APP_VERSION: "${APP_VERSION:-dev-local}"
     image: dockery:dev
     container_name: dockery
     restart: unless-stopped

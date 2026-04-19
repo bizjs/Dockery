@@ -50,6 +50,12 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Bake the semver (e.g. 0.1.0) into the web bundle so the footer
+          # shows the shipped version. steps.meta.outputs.version yields
+          # the tag sans the "v" prefix on tag pushes, or the branch name
+          # on workflow_dispatch — either way a useful identifier.
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64

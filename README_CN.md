@@ -2,7 +2,7 @@
 
 自托管 Docker Registry —— **Distribution v3.1.0 + React UI + 账户/权限 + 单镜像**。一个容器跑 registry、API、Web UI，同一个 nginx 端口对外。面向小团队 / 个人开发者。
 
-[English](./README.md) · [设计文档](./docs/dockery-design.md)
+[English](./README.md) · [部署指南](./docs/deployment.md) · [设计文档](./docs/dockery-design.md)
 
 ## 特性
 

@@ -2,7 +2,7 @@
 
 Self-hosted Docker Registry — **Distribution v3.1.0 + React UI + accounts/permissions + single image**. One container runs the registry, API, and Web UI behind one nginx port. For small teams and individuals who don't want Harbor.
 
-[中文](./README_CN.md) · [Design doc (CN)](./docs/dockery-design.md)
+[中文](./README_CN.md) · [Deployment guide (CN)](./docs/deployment.md) · [Design doc (CN)](./docs/dockery-design.md)
 
 ## Features
 
