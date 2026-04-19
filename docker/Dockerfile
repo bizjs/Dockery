@@ -11,6 +11,13 @@
 
 # ============ Stage 1: web-ui build ============
 FROM node:24-alpine AS ui-builder
+# APP_VERSION is baked into the bundle (see apps/web-ui/vite.config.ts).
+# Required — the image must always ship with a concrete version string.
+# CI passes the git tag; local builds must supply --build-arg APP_VERSION=...
+ARG APP_VERSION
+ENV APP_VERSION=${APP_VERSION}
+RUN test -n "$APP_VERSION" || ( \
+    echo "ERROR: --build-arg APP_VERSION=<version> is required" >&2 && exit 1 )
 WORKDIR /w
 RUN npm install -g pnpm@9
 # Copy only manifest files first for better caching.

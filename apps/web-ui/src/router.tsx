@@ -8,6 +8,8 @@ import Catalog from '@/pages/Catalog';
 import TagList from '@/pages/TagList';
 import LoginPage from '@/pages/Login';
 import UsersPage from '@/pages/Admin/Users';
+import MaintenancePage from '@/pages/Admin/Maintenance';
+import AuditPage from '@/pages/Admin/Audit';
 
 export const router = createBrowserRouter([
   {
@@ -30,6 +32,22 @@ export const router = createBrowserRouter([
         element: (
           <AuthGuard adminOnly>
             <UsersPage />
+          </AuthGuard>
+        ),
+      },
+      {
+        path: 'admin/maintenance',
+        element: (
+          <AuthGuard adminOnly>
+            <MaintenancePage />
+          </AuthGuard>
+        ),
+      },
+      {
+        path: 'admin/audit',
+        element: (
+          <AuthGuard adminOnly>
+            <AuditPage />
           </AuthGuard>
         ),
       },

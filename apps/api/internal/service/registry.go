@@ -98,6 +98,15 @@ func (s *RegistryService) Catalog(ctx *router.Context) error {
 		out.Repositories = filterByPatterns(out.Repositories, patterns)
 	}
 
+	// Normalize nil → empty slice so clients get `[]` instead of `null`
+	// after the last repo's blobs were swept by GC. Downstream callers
+	// (including our own UI) frequently destructure with defaults that
+	// only cover undefined — not null — so this keeps the contract
+	// stable for any consumer.
+	if out.Repositories == nil {
+		out.Repositories = []string{}
+	}
+
 	return ctx.Success(out)
 }
 
@@ -119,6 +128,11 @@ func (s *RegistryService) Tags(ctx *router.Context) error {
 	var out TagsView
 	if err := json.Unmarshal(body, &out); err != nil {
 		return response.ErrInternal.WithCause(err)
+	}
+	// Upstream returns {"tags": null} after the last tag is deleted;
+	// flatten to `[]` so every client sees the same shape. See Catalog.
+	if out.Tags == nil {
+		out.Tags = []string{}
 	}
 	return ctx.Success(out)
 }

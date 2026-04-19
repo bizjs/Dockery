@@ -134,10 +134,15 @@ func (r *GCRunner) Run(ctx context.Context, actor, clientIP string) (*GCResult, 
 	}
 	r.audit.Write(ctx, entry)
 
+	// Always return the partial result so callers can surface the
+	// supervisorctl / registry output even when the run fails — that
+	// output is the single most useful piece of debugging info for the
+	// operator.
+	result := &GCResult{Duration: duration, Output: output}
 	if err != nil {
-		return nil, err
+		return result, err
 	}
-	return &GCResult{Duration: duration, Output: output}, nil
+	return result, nil
 }
 
 // doRun is the stop / GC / restart sequence. The restart is attempted

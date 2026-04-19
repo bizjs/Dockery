@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { LogOut, User as UserIcon, Users as UsersIcon, Key } from 'lucide-react';
+import { LogOut, User as UserIcon, Users as UsersIcon, Key, Wrench, ScrollText } from 'lucide-react';
 
 import { useViewModel } from '@/lib/viewmodel';
 import { currentUserViewModel } from '@/hooks/use-current-user';
@@ -99,12 +99,26 @@ export function UserMenu() {
           <DropdownMenuLabel>Signed in as {user.username}</DropdownMenuLabel>
           <DropdownMenuSeparator />
           {vm.isAdmin && (
-            <DropdownMenuItem asChild>
-              <Link to="/admin/users" className="cursor-pointer">
-                <UsersIcon className="h-4 w-4 mr-2" />
-                Manage users
-              </Link>
-            </DropdownMenuItem>
+            <>
+              <DropdownMenuItem asChild>
+                <Link to="/admin/users" className="cursor-pointer">
+                  <UsersIcon className="h-4 w-4 mr-2" />
+                  Manage users
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link to="/admin/maintenance" className="cursor-pointer">
+                  <Wrench className="h-4 w-4 mr-2" />
+                  Maintenance
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link to="/admin/audit" className="cursor-pointer">
+                  <ScrollText className="h-4 w-4 mr-2" />
+                  Audit log
+                </Link>
+              </DropdownMenuItem>
+            </>
           )}
           <DropdownMenuItem onSelect={openPwDialog}>
             <Key className="h-4 w-4 mr-2" />
