@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { formatBinarySize } from '@/utils';
+import { compactArchLabel } from './platforms';
 import { toast } from 'sonner';
 import { currentUserViewModel } from '@/hooks/use-current-user';
 import {
@@ -174,7 +175,14 @@ export default function TagList() {
                   <div className="truncate">{tagInfo.digest ? tagInfo.digest : '-'}</div>
                 </td>
                 <td className="px-4 py-3 text-muted-foreground w-45">
-                  {tagInfo.architecture || '-'}
+                  {tagInfo.platforms && tagInfo.platforms.length > 0 ? (
+                    (() => {
+                      const { label, title } = compactArchLabel(tagInfo.platforms);
+                      return <span title={title}>{label}</span>;
+                    })()
+                  ) : (
+                    <>{tagInfo.architecture || '-'}</>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-right">
                   <div className="flex items-center justify-end gap-3">

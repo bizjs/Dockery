@@ -12,10 +12,19 @@
 
 import { api } from './api';
 
+export interface PlatformEntry {
+  os?: string;
+  architecture?: string;
+  variant?: string;
+  digest: string;
+  size: number;
+}
+
 export interface ImageInfo {
   imageName: string;
   tag: string;
   digest: string;
+  /** Total size. Single-arch: config + layers. Multi-arch: sum of manifests[i].size. */
   size: number;
   created?: string;
   architecture?: string;
@@ -35,6 +44,13 @@ export interface ImageInfo {
     size?: number;
     id?: string;
   }>;
+  /**
+   * Present only when the tag points to a manifest list / OCI image index.
+   * Per-platform fields (architecture, os, layers, cmd, env, …) at the top
+   * level are left empty in that case — they belong to each child manifest,
+   * not the list itself.
+   */
+  platforms?: PlatformEntry[];
 }
 
 interface CatalogResponse {
@@ -47,12 +63,40 @@ interface TagsResponse {
 }
 
 // --- Manifest shapes returned by /api/registry/{name}/manifests/{ref} ---
+// The endpoint can return either a single-arch manifest (v2+json) OR a
+// manifest list / OCI image index (list.v2+json / image.index.v1+json).
+// We accept a union; `manifests` is non-null only for the list case.
+
+interface ManifestEntry {
+  mediaType?: string;
+  digest?: string;
+  size?: number;
+  platform?: {
+    architecture?: string;
+    os?: string;
+    variant?: string;
+    'os.version'?: string;
+  };
+}
 
 interface ManifestV2 {
   schemaVersion?: number;
   mediaType?: string;
+  // Single-arch fields
   config?: { mediaType?: string; size?: number; digest?: string };
   layers?: Array<{ mediaType?: string; size?: number; digest?: string }>;
+  // Manifest list fields
+  manifests?: ManifestEntry[];
+}
+
+const MANIFEST_LIST_MEDIA_TYPES = new Set([
+  'application/vnd.docker.distribution.manifest.list.v2+json',
+  'application/vnd.oci.image.index.v1+json',
+]);
+
+function isManifestList(m: ManifestV2): boolean {
+  if (Array.isArray(m.manifests)) return true;
+  return m.mediaType ? MANIFEST_LIST_MEDIA_TYPES.has(m.mediaType) : false;
 }
 
 interface ConfigBlob {
@@ -104,6 +148,30 @@ export async function getImageInfo(repository: string, tag: string): Promise<Ima
   const manifest = await api.get<ManifestV2>(
     `/api/registry/${encodeURIComponent(repository)}/manifests/${encodeURIComponent(tag)}`,
   );
+
+  // Multi-arch short-circuit: a manifest list doesn't have a config blob
+  // or layers of its own. We surface the per-platform list and the sum
+  // of per-platform sizes; drilling into a specific platform's layers /
+  // config can be done later via the drawer on demand.
+  if (isManifestList(manifest)) {
+    const entries = manifest.manifests ?? [];
+    const platforms: PlatformEntry[] = entries.map((e) => ({
+      os: e.platform?.os,
+      architecture: e.platform?.architecture,
+      variant: e.platform?.variant,
+      digest: e.digest ?? '',
+      size: e.size ?? 0,
+    }));
+    const totalSize = platforms.reduce((s, p) => s + p.size, 0);
+    return {
+      imageName: repository,
+      tag,
+      digest: '',
+      size: totalSize,
+      layers: 0,
+      platforms,
+    };
+  }
 
   let created: string | undefined;
   let architecture: string | undefined;
