@@ -10,6 +10,7 @@ import { Copy, Check, X } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import type { ImageInfo } from '@/services/registry.service';
+import { formatPlatform } from './platforms';
 
 interface TagDetailDrawerProps {
   open: boolean;
@@ -33,6 +34,7 @@ export function TagDetailDrawer({ open, onClose, tagInfo, imageName }: TagDetail
   };
 
   const pullCommand = `docker pull ${imageName}:${tagInfo.tag}`;
+  const isMultiArch = !!tagInfo.platforms && tagInfo.platforms.length > 0;
 
   return (
     <Sheet open={open} onOpenChange={onClose}>
@@ -61,6 +63,47 @@ export function TagDetailDrawer({ open, onClose, tagInfo, imageName }: TagDetail
               </Button>
             </div>
           </div>
+
+          {/* Platforms (multi-arch only) */}
+          {isMultiArch && tagInfo.platforms && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-muted-foreground">
+                Platforms ({tagInfo.platforms.length})
+              </label>
+              <div className="border rounded-md divide-y">
+                {tagInfo.platforms.map((p) => (
+                  <div
+                    key={p.digest || formatPlatform(p)}
+                    className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-2 text-sm"
+                  >
+                    <span className="font-medium">{formatPlatform(p)}</span>
+                    <code className="text-xs font-mono text-muted-foreground truncate">
+                      {p.digest || '—'}
+                    </code>
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs text-muted-foreground">
+                        {formatBinarySize(p.size)}
+                      </span>
+                      {p.digest && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0"
+                          onClick={() => copyToClipboard(p.digest, `${formatPlatform(p)} digest`)}
+                        >
+                          {copiedField === `${formatPlatform(p)} digest` ? (
+                            <Check className="h-3 w-3 text-green-500" />
+                          ) : (
+                            <Copy className="h-3 w-3" />
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Grid layout for small fields */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -106,20 +149,26 @@ export function TagDetailDrawer({ open, onClose, tagInfo, imageName }: TagDetail
               </div>
             )}
 
-            {/* Layers */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-muted-foreground">Layers</label>
-              <div className="px-3 py-2 bg-muted rounded-md text-sm">
-                {tagInfo.layers} {tagInfo.layers === 1 ? 'layer' : 'layers'}
+            {/* Layers — hidden for multi-arch: layers live on each child manifest */}
+            {!isMultiArch && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-muted-foreground">Layers</label>
+                <div className="px-3 py-2 bg-muted rounded-md text-sm">
+                  {tagInfo.layers} {tagInfo.layers === 1 ? 'layer' : 'layers'}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Size */}
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium text-muted-foreground">Size</label>
+            <div className={`space-y-2 ${isMultiArch ? 'md:col-span-3' : 'md:col-span-2'}`}>
+              <label className="text-sm font-medium text-muted-foreground">
+                {isMultiArch ? 'Total size (all platforms)' : 'Size'}
+              </label>
               <div className="px-3 py-2 bg-muted rounded-md text-sm">
                 {formatBinarySize(tagInfo.size)}
-                <span className="text-muted-foreground ml-2">({tagInfo.size.toLocaleString()} bytes)</span>
+                <span className="text-muted-foreground ml-2">
+                  ({tagInfo.size.toLocaleString()} bytes)
+                </span>
               </div>
             </div>
           </div>

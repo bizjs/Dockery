@@ -5,6 +5,7 @@
 
 import type { ReactNode } from 'react'
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Checkbox } from '@/components/ui/checkbox'
 import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -16,9 +17,23 @@ interface TagTableProps {
   sortField: SortField | null
   sortDirection: SortDirection
   onSort: (field: SortField) => void
+  // Selection header: only rendered when selection is available (admin/write).
+  showSelectionColumn?: boolean
+  allOnPageSelected?: boolean
+  someOnPageSelected?: boolean
+  onToggleSelectPage?: () => void
 }
 
-export function TagTable({ children, sortField, sortDirection, onSort }: TagTableProps) {
+export function TagTable({
+  children,
+  sortField,
+  sortDirection,
+  onSort,
+  showSelectionColumn = false,
+  allOnPageSelected = false,
+  someOnPageSelected = false,
+  onToggleSelectPage,
+}: TagTableProps) {
   const getSortIcon = (field: SortField) => {
     if (sortField !== field) {
       return <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -35,6 +50,15 @@ export function TagTable({ children, sortField, sortDirection, onSort }: TagTabl
       <Table>
         <TableHeader>
           <TableRow>
+            {showSelectionColumn && (
+              <TableHead className="w-10">
+                <Checkbox
+                  checked={allOnPageSelected ? true : someOnPageSelected ? 'indeterminate' : false}
+                  onCheckedChange={() => onToggleSelectPage?.()}
+                  aria-label="Select all on this page"
+                />
+              </TableHead>
+            )}
             <TableHead>
               <Button
                 variant="ghost"

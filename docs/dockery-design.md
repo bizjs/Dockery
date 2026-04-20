@@ -91,7 +91,7 @@ dockery/
 ├── package.json                 pnpm workspace 根
 ├── pnpm-workspace.yaml
 ├── CLAUDE.md
-├── README.md / README_CN.md
+├── README.md / README_EN.md
 └── .github/workflows/build-and-push.yml
 ```
 

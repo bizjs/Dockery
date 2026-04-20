@@ -1,12 +1,21 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useViewModel } from '@/lib/viewmodel';
 import { TagListViewModel } from './view-model';
 import { TagTable } from './TagTable';
 import { TagDetailDrawer } from './TagDetailDrawer';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { formatBinarySize } from '@/utils';
+import { compactArchLabel } from './platforms';
 import { toast } from 'sonner';
 import { currentUserViewModel } from '@/hooks/use-current-user';
 import {
@@ -20,12 +29,14 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
+
 export default function TagList() {
   const { image } = useParams<{ image: string }>();
   const vm = useViewModel(TagListViewModel, { destroyOnUnmount: true });
   const snapshot = vm.$useSnapshot();
   const meSnap = useViewModel(currentUserViewModel).$useSnapshot();
-  // Role `view` can only pull; hide the delete button to match server policy.
+  // Role `view` can only pull; hide delete affordances to match server policy.
   const canDelete = meSnap.user?.role === 'admin' || meSnap.user?.role === 'write';
 
   useEffect(() => {
@@ -33,7 +44,23 @@ export default function TagList() {
     vm.setImageName(decodedImage);
   }, [vm, image]);
 
-  // Use view-model hook - pass a dummy instance if vm is null
+  // Slice the sorted list for the current page. Kept in the component
+  // because Valtio class getters don't subscribe via $useSnapshot.
+  const pageCount = useMemo(
+    () => Math.max(1, Math.ceil(snapshot.tagList.length / snapshot.pageSize)),
+    [snapshot.tagList.length, snapshot.pageSize],
+  );
+  const pagedTags = useMemo(() => {
+    const start = snapshot.page * snapshot.pageSize;
+    return snapshot.tagList.slice(start, start + snapshot.pageSize);
+  }, [snapshot.tagList, snapshot.page, snapshot.pageSize]);
+
+  const selectedSet = useMemo(() => new Set(snapshot.selectedTags), [snapshot.selectedTags]);
+  const pageTagNames = useMemo(() => pagedTags.map((t) => t.tag), [pagedTags]);
+  const allOnPageSelected =
+    pageTagNames.length > 0 && pageTagNames.every((t) => selectedSet.has(t));
+  const someOnPageSelected =
+    !allOnPageSelected && pageTagNames.some((t) => selectedSet.has(t));
 
   if (!snapshot.image) {
     return (
@@ -84,46 +111,180 @@ export default function TagList() {
         </div>
       )}
 
+      {/* Bulk-selection toolbar */}
+      {canDelete && snapshot.selectedTags.length > 0 && (
+        <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/40 px-4 py-2">
+          <div className="text-sm">
+            <span className="font-semibold">{snapshot.selectedTags.length}</span>
+            <span className="text-muted-foreground"> selected</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => vm.clearSelection()}
+              className="ml-2 h-7 px-2 text-xs"
+            >
+              <X className="h-3 w-3 mr-1" />
+              Clear
+            </Button>
+          </div>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => vm.openBulkDeleteDialog()}
+            className="h-8"
+          >
+            <Trash2 className="h-4 w-4 mr-1" />
+            Delete {snapshot.selectedTags.length}
+          </Button>
+        </div>
+      )}
+
       {/* Tags table */}
       {!snapshot.loading && !snapshot.error && snapshot.tagList.length > 0 && (
-        <TagTable
-          sortField={snapshot.sortField}
-          sortDirection={snapshot.sortDirection}
-          onSort={(field) => vm.setSorting(field)}
-        >
-          {snapshot.tagList.map((tagInfo) => (
-            <tr key={tagInfo.tag} className="border-b">
-              <td className="px-4 py-3">{tagInfo.tag}</td>
-              <td className="px-4 py-3 text-muted-foreground w-32">{formatBinarySize(tagInfo.size)}</td>
-              <td className="px-4 py-3 text-muted-foreground w-45 min-w-45">
-                {tagInfo.created ? new Date(tagInfo.created).toLocaleString() : '-'}
-              </td>
-              <td className="px-4 py-3 text-muted-foreground font-mono text-xs">
-                <div className="truncate">{tagInfo.digest ? tagInfo.digest : '-'}</div>
-              </td>
-              <td className="px-4 py-3 text-muted-foreground w-45">{tagInfo.architecture || '-'}</td>
-              <td className="px-4 py-3 text-right">
-                <div className="flex items-center justify-end gap-3">
-                  <button
-                    onClick={() => vm.openDrawer(tagInfo)}
-                    className="text-primary hover:underline text-sm font-medium"
-                  >
-                    Detail
-                  </button>
-                  {canDelete && (
-                    <button
-                      onClick={() => vm.openDeleteDialog(tagInfo)}
-                      className="text-destructive hover:underline text-sm font-medium"
-                      title="Delete this tag"
-                    >
-                      Delete
-                    </button>
+        <>
+          <TagTable
+            sortField={snapshot.sortField}
+            sortDirection={snapshot.sortDirection}
+            onSort={(field) => vm.setSorting(field)}
+            showSelectionColumn={canDelete}
+            allOnPageSelected={allOnPageSelected}
+            someOnPageSelected={someOnPageSelected}
+            onToggleSelectPage={() => vm.toggleSelectPage(pageTagNames)}
+          >
+            {pagedTags.map((tagInfo) => (
+              <tr key={tagInfo.tag} className="border-b">
+                {canDelete && (
+                  <td className="px-4 py-3 w-10">
+                    <Checkbox
+                      checked={selectedSet.has(tagInfo.tag)}
+                      onClick={(e) =>
+                        vm.toggleTagSelection(tagInfo.tag, { shift: e.shiftKey })
+                      }
+                      aria-label={`Select tag ${tagInfo.tag}`}
+                    />
+                  </td>
+                )}
+                <td className="px-4 py-3">{tagInfo.tag}</td>
+                <td className="px-4 py-3 text-muted-foreground w-32">
+                  {formatBinarySize(tagInfo.size)}
+                </td>
+                <td className="px-4 py-3 text-muted-foreground w-45 min-w-45">
+                  {tagInfo.created ? new Date(tagInfo.created).toLocaleString() : '-'}
+                </td>
+                <td className="px-4 py-3 text-muted-foreground font-mono text-xs">
+                  <div className="truncate">{tagInfo.digest ? tagInfo.digest : '-'}</div>
+                </td>
+                <td className="px-4 py-3 text-muted-foreground w-45">
+                  {tagInfo.platforms && tagInfo.platforms.length > 0 ? (
+                    (() => {
+                      const { label, title } = compactArchLabel(tagInfo.platforms);
+                      return <span title={title}>{label}</span>;
+                    })()
+                  ) : (
+                    <>{tagInfo.architecture || '-'}</>
                   )}
-                </div>
-              </td>
-            </tr>
-          ))}
-        </TagTable>
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <div className="flex items-center justify-end gap-3">
+                    <button
+                      onClick={() => vm.openDrawer(tagInfo)}
+                      className="text-primary hover:underline text-sm font-medium"
+                    >
+                      Detail
+                    </button>
+                    {canDelete && (
+                      <button
+                        onClick={() => vm.openDeleteDialog(tagInfo)}
+                        className="text-destructive hover:underline text-sm font-medium"
+                        title="Delete this tag"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </TagTable>
+
+          {/* Pagination */}
+          <div className="flex items-center justify-between gap-4 px-1 text-sm">
+            <div className="text-muted-foreground">
+              Showing{' '}
+              <span className="font-medium text-foreground">
+                {snapshot.page * snapshot.pageSize + 1}–
+                {Math.min((snapshot.page + 1) * snapshot.pageSize, snapshot.tagList.length)}
+              </span>{' '}
+              of <span className="font-medium text-foreground">{snapshot.tagList.length}</span>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">Rows per page</span>
+                <Select
+                  value={String(snapshot.pageSize)}
+                  onValueChange={(v) => vm.setPageSize(Number(v))}
+                >
+                  <SelectTrigger className="h-8 w-20">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PAGE_SIZE_OPTIONS.map((n) => (
+                      <SelectItem key={n} value={String(n)}>
+                        {n}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => vm.setPage(0)}
+                  disabled={snapshot.page === 0}
+                  aria-label="First page"
+                >
+                  <ChevronsLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => vm.setPage(snapshot.page - 1)}
+                  disabled={snapshot.page === 0}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="px-2 text-muted-foreground">
+                  Page <span className="font-medium text-foreground">{snapshot.page + 1}</span> /{' '}
+                  {pageCount}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => vm.setPage(snapshot.page + 1)}
+                  disabled={snapshot.page >= pageCount - 1}
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => vm.setPage(pageCount - 1)}
+                  disabled={snapshot.page >= pageCount - 1}
+                  aria-label="Last page"
+                >
+                  <ChevronsRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        </>
       )}
 
       {/* Tag Detail Drawer */}
@@ -134,18 +295,15 @@ export default function TagList() {
         imageName={snapshot.image}
       />
 
-      {/* Delete Confirmation Dialog */}
+      {/* Single-tag Delete Confirmation Dialog */}
       <AlertDialog open={snapshot.deleteDialogOpen} onOpenChange={vm.closeDeleteDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Tag</AlertDialogTitle>
             <AlertDialogDescription>
               Are you sure you want to delete tag{' '}
-              <span className="font-semibold text-foreground">
-                {snapshot.tagToDelete?.tag}
-              </span>{' '}
-              from{' '}
-              <span className="font-semibold text-foreground">{snapshot.image}</span>?
+              <span className="font-semibold text-foreground">{snapshot.tagToDelete?.tag}</span>{' '}
+              from <span className="font-semibold text-foreground">{snapshot.image}</span>?
               <br />
               <br />
               This action cannot be undone. The tag will be permanently removed from the registry.
@@ -168,6 +326,79 @@ export default function TagList() {
             >
               {snapshot.deleting ? 'Deleting...' : 'Delete'}
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk Delete Confirmation Dialog */}
+      <AlertDialog
+        open={snapshot.bulkDeleteDialogOpen}
+        onOpenChange={(open) => !open && !snapshot.bulkDeleting && vm.closeBulkDeleteDialog()}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete {snapshot.selectedTags.length}{' '}
+              {snapshot.selectedTags.length === 1 ? 'tag' : 'tags'}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {snapshot.bulkDeleting ? (
+                <>
+                  Deleting{' '}
+                  <span className="font-semibold text-foreground">
+                    {snapshot.bulkDeleteProgress}
+                  </span>{' '}
+                  of <span className="font-semibold text-foreground">
+                    {snapshot.selectedTags.length}
+                  </span>
+                  ...
+                </>
+              ) : snapshot.bulkDeleteFailed.length > 0 ? (
+                <>
+                  <span className="text-destructive font-medium">
+                    {snapshot.bulkDeleteFailed.length} tag
+                    {snapshot.bulkDeleteFailed.length === 1 ? '' : 's'} failed to delete.
+                  </span>{' '}
+                  The failures remain selected — close this dialog and retry.
+                </>
+              ) : (
+                <>
+                  This will permanently remove{' '}
+                  <span className="font-semibold text-foreground">
+                    {snapshot.selectedTags.length}
+                  </span>{' '}
+                  {snapshot.selectedTags.length === 1 ? 'tag' : 'tags'} from{' '}
+                  <span className="font-semibold text-foreground">{snapshot.image}</span>. This
+                  action cannot be undone.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={snapshot.bulkDeleting}>
+              {snapshot.bulkDeleteFailed.length > 0 ? 'Close' : 'Cancel'}
+            </AlertDialogCancel>
+            {snapshot.bulkDeleteFailed.length === 0 && (
+              <AlertDialogAction
+                onClick={async (e) => {
+                  e.preventDefault();
+                  const { deleted, failed } = await vm.bulkDelete();
+                  if (failed.length === 0) {
+                    toast.success(`Deleted ${deleted} ${deleted === 1 ? 'tag' : 'tags'}.`);
+                  } else {
+                    toast.error(
+                      `Deleted ${deleted}, ${failed.length} failed. See dialog for details.`,
+                    );
+                  }
+                }}
+                disabled={snapshot.bulkDeleting}
+                className="bg-destructive hover:bg-destructive/90"
+              >
+                {snapshot.bulkDeleting
+                  ? `Deleting ${snapshot.bulkDeleteProgress}/${snapshot.selectedTags.length}...`
+                  : `Delete ${snapshot.selectedTags.length}`}
+              </AlertDialogAction>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
