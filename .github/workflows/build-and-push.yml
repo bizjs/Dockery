@@ -33,6 +33,9 @@ jobs:
       # write: create + push the git tag on manual dispatch.
       contents: write
       packages: write
+      # attest-build-provenance needs an OIDC token + attestation write.
+      id-token: write
+      attestations: write
 
     steps:
       - name: Checkout repository
