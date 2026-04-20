@@ -1,10 +1,26 @@
 name: Build and Push to GHCR
 
+# Two ways to ship a release:
+#
+# 1. Tag-driven (standard):
+#      git tag -a v0.1.0 -m 'Release 0.1.0' && git push origin v0.1.0
+#    → image :0.1.0 + :latest, footer v0.1.0.
+#
+# 2. Manual (Actions → Run workflow → enter tag):
+#    Type the bare version (e.g. 0.1.0). It's used verbatim as the
+#    image tag and APP_VERSION; the git tag pushed to origin is
+#    v-prefixed (→ v0.1.0) to stay consistent with path 1.
+
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Bare version, e.g. 0.1.0 (no v prefix). Used as-is for the image tag and APP_VERSION; the git tag pushed to origin is v-prefixed (→ v0.1.0).'
+        required: true
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -14,7 +30,8 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # write: create + push the git tag on manual dispatch.
+      contents: write
       packages: write
 
     steps:
@@ -35,11 +52,12 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          # All-in-one image: registry + API + UI + nginx behind one
-          # port. Published as ghcr.io/<owner>/dockery:<version> and :latest.
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Tag push: semver pattern strips the 'v' → :0.1.0.
+          # Manual:   use the input verbatim → :<whatever-you-typed>.
           tags: |
             type=semver,pattern={{version}}
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
             type=raw,value=latest
 
       - name: Build and push Dockery image
@@ -47,21 +65,29 @@ jobs:
         with:
           context: .
           file: ./docker/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Bake the semver (e.g. 0.1.0) into the web bundle so the footer
-          # shows the shipped version. steps.meta.outputs.version yields
-          # the tag sans the "v" prefix on tag pushes, or the branch name
-          # on workflow_dispatch — either way a useful identifier.
           build-args: |
             APP_VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64
 
+      # Manual dispatch only — tag pushes already carry the git tag.
+      # GITHUB_TOKEN-pushed tags don't re-trigger this workflow
+      # (GitHub policy). git push fails loudly if the tag exists.
+      - name: Push git tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "v$TAG" "$GITHUB_SHA" -m "Release v$TAG"
+          git push origin "v$TAG"
+
       - name: Generate artifact attestation
-        if: github.event_name != 'pull_request'
         uses: actions/attest-build-provenance@v1
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
