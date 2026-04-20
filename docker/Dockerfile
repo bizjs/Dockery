@@ -10,7 +10,9 @@
 #   docker build -f docker/Dockerfile -t dockery:dev .
 
 # ============ Stage 1: web-ui build ============
-FROM node:24-alpine AS ui-builder
+# --platform=$BUILDPLATFORM: UI output is static/arch-neutral, so run once
+# on the runner's native arch instead of once per target platform.
+FROM --platform=$BUILDPLATFORM node:24-alpine AS ui-builder
 # APP_VERSION is baked into the bundle (see apps/web-ui/vite.config.ts).
 # Required — the image must always ship with a concrete version string.
 # CI passes the git tag; local builds must supply --build-arg APP_VERSION=...
@@ -27,13 +29,19 @@ COPY apps/web-ui ./apps/web-ui
 RUN cd apps/web-ui && pnpm run build
 
 # ============ Stage 2: api build ============
-FROM golang:1.25-alpine AS api-builder
+# --platform=$BUILDPLATFORM + GOARCH=$TARGETARCH: cross-compile on the
+# runner's native arch so Go's toolchain runs once per target instead
+# of the whole stage running under QEMU emulation.
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS api-builder
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /w
 COPY apps/api/go.mod apps/api/go.sum ./
 RUN go mod download
 COPY apps/api .
 # Static binary; no cgo so modernc.org/sqlite works on scratch/alpine.
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/dockery-api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -ldflags="-s -w" -o /out/dockery-api ./cmd/api
 
 # ============ Stage 3: registry binary ============
 FROM distribution/distribution:3.1.0 AS registry-src
