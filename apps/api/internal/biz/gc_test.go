@@ -3,6 +3,9 @@ package biz
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -204,6 +207,94 @@ func TestGCRun_GCFailureStillRestartsRegistry(t *testing.T) {
 	}
 	if mode.Active() {
 		t.Fatalf("maintenance flag still active after failed Run")
+	}
+}
+
+// buildFakeRegistryRoot creates a distribution-shaped directory tree
+// under root for testing pruneEmptyRepos. For each entry in repos, it
+// creates `<root>/docker/registry/v2/repositories/<name>/_manifests/`
+// and, if tagged, a dummy tag subdir so the repo looks occupied.
+func buildFakeRegistryRoot(t *testing.T, root string, repos map[string]bool) {
+	t.Helper()
+	base := filepath.Join(root, "docker", "registry", "v2", "repositories")
+	for name, hasTag := range repos {
+		repo := filepath.Join(base, name)
+		if err := os.MkdirAll(filepath.Join(repo, "_manifests", "tags"), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", repo, err)
+		}
+		if hasTag {
+			if err := os.MkdirAll(filepath.Join(repo, "_manifests", "tags", "latest", "current"), 0o755); err != nil {
+				t.Fatalf("mkdir tag: %v", err)
+			}
+		}
+	}
+}
+
+func TestPruneEmptyRepos_RemovesEmptyAndKeepsTagged(t *testing.T) {
+	root := t.TempDir()
+	buildFakeRegistryRoot(t, root, map[string]bool{
+		"demo/hello":     false, // empty → prune
+		"demo/keep":      true,  // tagged → keep
+		"alice/team/app": false, // empty nested → prune (+ rm namespace parents)
+		"alice/other":    true,  // tagged → keep, so alice/ must stay
+	})
+
+	r := newGCRunnerWithRunner(GCConfig{
+		RegistryRootDir: root,
+		PruneEmptyRepos: true,
+	}, NewMaintenance(), NewAuditUsecase(&fakeAuditRepo{}, log.NewStdLogger(discard{})),
+		log.NewStdLogger(discard{}), func(context.Context, string, ...string) (string, error) { return "", nil })
+
+	pruned, err := r.pruneEmptyRepos()
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	sort.Strings(pruned)
+	want := []string{"alice/team/app", "demo/hello"}
+	if strings.Join(pruned, ",") != strings.Join(want, ",") {
+		t.Fatalf("pruned=%v want=%v", pruned, want)
+	}
+
+	base := filepath.Join(root, "docker", "registry", "v2", "repositories")
+	// Removed repos are gone.
+	for _, rel := range want {
+		if _, err := os.Stat(filepath.Join(base, rel)); !os.IsNotExist(err) {
+			t.Errorf("%s should be removed, err=%v", rel, err)
+		}
+	}
+	// demo/ is now empty (only demo/keep survived which has tags ... wait)
+	// Actually demo/keep has tags so it stays; demo/ keeps demo/keep so
+	// demo/ is NOT empty. Must still exist.
+	if _, err := os.Stat(filepath.Join(base, "demo")); err != nil {
+		t.Errorf("demo/ should survive: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "demo", "keep")); err != nil {
+		t.Errorf("demo/keep should survive: %v", err)
+	}
+	// alice/team/ was the sole child of alice/team after pruning the
+	// leaf repo, so team should be rmdir'd. alice/other survives so
+	// alice/ stays.
+	if _, err := os.Stat(filepath.Join(base, "alice", "team")); !os.IsNotExist(err) {
+		t.Errorf("alice/team should be cleaned up, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "alice", "other")); err != nil {
+		t.Errorf("alice/other should survive: %v", err)
+	}
+}
+
+func TestPruneEmptyRepos_MissingRootIsNoOp(t *testing.T) {
+	r := newGCRunnerWithRunner(GCConfig{
+		RegistryRootDir: filepath.Join(t.TempDir(), "nonexistent"),
+		PruneEmptyRepos: true,
+	}, NewMaintenance(), NewAuditUsecase(&fakeAuditRepo{}, log.NewStdLogger(discard{})),
+		log.NewStdLogger(discard{}), func(context.Context, string, ...string) (string, error) { return "", nil })
+
+	pruned, err := r.pruneEmptyRepos()
+	if err != nil {
+		t.Fatalf("missing root should be no-op, got err=%v", err)
+	}
+	if len(pruned) != 0 {
+		t.Fatalf("expected no pruning, got %v", pruned)
 	}
 }
 

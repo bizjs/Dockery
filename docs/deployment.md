@@ -147,6 +147,8 @@ services:
 | `dockery.gc.registry_conf` | string | `/etc/docker/registry/config.yml` | 同上 |
 | `dockery.gc.service_name` | string | `registry` | supervisord `[program:registry]` 的 name |
 | `dockery.gc.delete_untagged` | bool | `true` | GC 时顺便清理无 tag 的 manifest(强烈推荐保持 true) |
+| `dockery.gc.registry_root_dir` | string | `/data/registry` | distribution `storage.filesystem.rootdirectory` 的镜像;GC 后扫这个目录删空 repo |
+| `dockery.gc.prune_empty_repos` | bool | `true` | 是否在 GC 后清理"零 tag 但还挂着的 repo 目录"(distribution 自己不删,catalog 里会一直看到僵尸项) |
 | `dockery.gc.timeout_seconds` | int | `1800` | 单次 GC 全流程硬超时;超大仓库要调高 |
 
 ### 4.3 distribution registry 配置(`REGISTRY_*`)
@@ -370,8 +372,11 @@ docker exec -it dockery dockery-api -conf /etc/dockery user delete alice
 1. 设维护 flag,UI 的镜像删除立刻返 503
 2. `supervisorctl stop registry`
 3. `registry garbage-collect --delete-untagged /etc/docker/registry/config.yml`
-4. `supervisorctl start registry`
-5. 清 flag,写 `gc.completed` 审计
+4. **扫 `/data/registry/docker/registry/v2/repositories/`**,删除没有任何 tag 的 repo 目录,再 rmdir 空的 namespace 父目录
+5. `supervisorctl start registry`
+6. 清 flag,写 `gc.completed` 审计
+
+第 4 步是必要的兜底 — distribution 的 `garbage-collect` 只清 blob 和 orphan manifest,不会删 repo 目录,否则 `/v2/_catalog` 会一直列着一堆零 tag 的"僵尸" repo。用 S3 等非文件系统后端时关掉 `dockery.gc.prune_empty_repos`。
 
 期间 docker push/pull 会**失败**,因为 registry 本身停了 — 挑低谷时段跑。
 

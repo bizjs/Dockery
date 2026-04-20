@@ -57,6 +57,12 @@ func NewGCConfigFromConf(c *conf.Dockery) GCConfig {
 	if g.DeleteUntagged != nil {
 		cfg.DeleteUntagged = *g.DeleteUntagged
 	}
+	if g.RegistryRootDir != "" {
+		cfg.RegistryRootDir = g.RegistryRootDir
+	}
+	if g.PruneEmptyRepos != nil {
+		cfg.PruneEmptyRepos = *g.PruneEmptyRepos
+	}
 	if g.TimeoutSeconds > 0 {
 		cfg.Timeout = time.Duration(g.TimeoutSeconds) * time.Second
 	}
