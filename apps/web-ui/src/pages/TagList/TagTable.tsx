@@ -51,7 +51,7 @@ export function TagTable({
         <TableHeader>
           <TableRow>
             {showSelectionColumn && (
-              <TableHead className="w-10">
+              <TableHead className="w-10 px-4">
                 <Checkbox
                   checked={allOnPageSelected ? true : someOnPageSelected ? 'indeterminate' : false}
                   onCheckedChange={() => onToggleSelectPage?.()}
@@ -59,39 +59,27 @@ export function TagTable({
                 />
               </TableHead>
             )}
-            <TableHead>
-              <Button
-                variant="ghost"
-                onClick={() => onSort('tag')}
-                className="h-8 px-2 lg:px-3"
-              >
+            <TableHead className="px-4">
+              <Button variant="ghost" onClick={() => onSort('tag')} className="-ml-3 h-8 px-3">
                 Tag
                 {getSortIcon('tag')}
               </Button>
             </TableHead>
-            <TableHead>
-              <Button
-                variant="ghost"
-                onClick={() => onSort('size')}
-                className="h-8 px-2 lg:px-3"
-              >
+            <TableHead className="px-4">
+              <Button variant="ghost" onClick={() => onSort('size')} className="-ml-3 h-8 px-3">
                 Size
                 {getSortIcon('size')}
               </Button>
             </TableHead>
-            <TableHead>
-              <Button
-                variant="ghost"
-                onClick={() => onSort('created')}
-                className="h-8 px-2 lg:px-3"
-              >
+            <TableHead className="px-4">
+              <Button variant="ghost" onClick={() => onSort('created')} className="-ml-3 h-8 px-3">
                 Created
                 {getSortIcon('created')}
               </Button>
             </TableHead>
-            <TableHead>Digest</TableHead>
-            <TableHead>Architecture</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
+            <TableHead className="px-4">Digest</TableHead>
+            <TableHead className="px-4">Architecture</TableHead>
+            <TableHead className="px-4 text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>{children}</TableBody>

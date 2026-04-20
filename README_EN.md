@@ -14,6 +14,26 @@ Self-hosted Docker Registry — **Distribution v3.1.0 + React UI + accounts/perm
 
 **Out of scope for v0.1:** image scanning, cosign signing, replication, multi-tenancy, HA, pull-through cache.
 
+## Screenshots
+
+<table>
+<tr>
+<td colspan="2" valign="top" align="center"><img src="./docs/screenshots/02-catalog.png" alt="Catalog" /><br/><sub>Catalog — all repositories at a glance, with search</sub></td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img src="./docs/screenshots/03-tag-list.png" alt="Tag list" /><br/><sub>Tag list — sort, bulk multi-select, multi-arch badge, pagination</sub></td>
+<td width="50%" valign="top"><img src="./docs/screenshots/04-tag-detail.png" alt="Tag detail" /><br/><sub>Tag detail drawer — pull command, config, layer history, per-arch digests</sub></td>
+</tr>
+<tr>
+<td valign="top"><img src="./docs/screenshots/05-admin-users.png" alt="Users" /><br/><sub>Users — roles, enable/disable, per-user repo glob patterns</sub></td>
+<td valign="top"><img src="./docs/screenshots/06-admin-maintenance.png" alt="Maintenance / GC" /><br/><sub>Maintenance — trigger garbage collection to reclaim orphan blobs</sub></td>
+</tr>
+<tr>
+<td valign="top"><img src="./docs/screenshots/07-admin-audit.png" alt="Audit log" /><br/><sub>Audit log — login / token / admin events, filterable by actor / action / time</sub></td>
+<td valign="top"><img src="./docs/screenshots/01-login.png" alt="Login" /><br/><sub>Login</sub></td>
+</tr>
+</table>
+
 ## Quick start
 
 ```bash

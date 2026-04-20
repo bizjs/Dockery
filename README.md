@@ -14,6 +14,26 @@
 
 **v0.1 不做**：镜像扫描、cosign 签名、复制、多租户、HA、代理缓存。
 
+## 界面预览
+
+<table>
+<tr>
+<td colspan="2" valign="top" align="center"><img src="./docs/screenshots/02-catalog.png" alt="Catalog 首页" /><br/><sub>首页:所有仓库一览,支持搜索</sub></td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img src="./docs/screenshots/03-tag-list.png" alt="Tag 列表" /><br/><sub>Tag 列表:排序、批量多选、多架构、分页</sub></td>
+<td width="50%" valign="top"><img src="./docs/screenshots/04-tag-detail.png" alt="Tag 详情" /><br/><sub>Tag 详情抽屉:pull 命令、config、layer 历史、多架构 digest</sub></td>
+</tr>
+<tr>
+<td valign="top"><img src="./docs/screenshots/05-admin-users.png" alt="用户管理" /><br/><sub>用户管理:角色、启停、per-user 仓库 glob 模式</sub></td>
+<td valign="top"><img src="./docs/screenshots/06-admin-maintenance.png" alt="维护 / GC" /><br/><sub>维护:触发 Garbage Collection,回收悬空 blob</sub></td>
+</tr>
+<tr>
+<td valign="top"><img src="./docs/screenshots/07-admin-audit.png" alt="审计日志" /><br/><sub>审计日志:登录 / 令牌 / 管理操作,可按 actor / action / 时间过滤</sub></td>
+<td valign="top"><img src="./docs/screenshots/01-login.png" alt="登录" /><br/><sub>登录页</sub></td>
+</tr>
+</table>
+
 ## 快速开始
 
 ```bash
