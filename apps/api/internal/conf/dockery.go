@@ -68,6 +68,15 @@ type DockeryGC struct {
 	// Only disable if you actively rely on digest-only references after
 	// tag deletion (unusual).
 	DeleteUntagged *bool `json:"delete_untagged" yaml:"delete_untagged"`
+	// RegistryRootDir is the filesystem root that matches the
+	// distribution registry's `storage.filesystem.rootdirectory`
+	// (default /data/registry). Dockery walks this to prune repo
+	// directories that have no tags after GC.
+	RegistryRootDir string `json:"registry_root_dir" yaml:"registry_root_dir"`
+	// PruneEmptyRepos controls the post-GC sweep of empty repo dirs.
+	// Default: true. Set false when using a non-filesystem storage
+	// driver (S3 etc.) where the on-disk layout doesn't apply.
+	PruneEmptyRepos *bool `json:"prune_empty_repos" yaml:"prune_empty_repos"`
 	// TimeoutSeconds is the hard cap on the full stop/gc/restart cycle.
 	// Default: 1800 (30 min). Raise for very large registries.
 	TimeoutSeconds int `json:"timeout_seconds" yaml:"timeout_seconds"`

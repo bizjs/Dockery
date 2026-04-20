@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -22,7 +25,19 @@ type GCConfig struct {
 	RegistryConf     string        // e.g. /etc/docker/registry/config.yml
 	ServiceName      string        // supervisord program name, e.g. "registry"
 	DeleteUntagged   bool          // pass --delete-untagged to garbage-collect
-	Timeout          time.Duration // hard cap on the whole op; default 30 min
+	// RegistryRootDir is the filesystem root used by distribution's
+	// filesystem driver (`storage.filesystem.rootdirectory` in its
+	// config.yml, default /data/registry). GCRunner reads this to
+	// prune empty repo directories after GC — distribution's
+	// garbage-collect leaves those dirs behind, so `/v2/_catalog` keeps
+	// listing repos that have no tags.
+	RegistryRootDir string
+	// PruneEmptyRepos enables the post-GC sweep that removes repo
+	// directories with no tags (and their now-empty namespace parents).
+	// Default: true; set false only when using a non-filesystem
+	// storage driver (S3 etc.) where the layout differs.
+	PruneEmptyRepos bool
+	Timeout         time.Duration // hard cap on the whole op; default 30 min
 }
 
 // defaultGCConfig returns container-baked-in paths. Still used when the
@@ -35,6 +50,8 @@ func defaultGCConfig() GCConfig {
 		RegistryConf:     "/etc/docker/registry/config.yml",
 		ServiceName:      "registry",
 		DeleteUntagged:   true,
+		RegistryRootDir:  "/data/registry",
+		PruneEmptyRepos:  true,
 		Timeout:          30 * time.Minute,
 	}
 }
@@ -145,9 +162,15 @@ func (r *GCRunner) Run(ctx context.Context, actor, clientIP string) (*GCResult, 
 	return result, nil
 }
 
-// doRun is the stop / GC / restart sequence. The restart is attempted
-// even when GC fails so we don't leave a stopped registry behind; any
-// restart error is appended to the primary error, not substituted.
+// doRun is the stop / GC / prune / restart sequence. The restart is
+// attempted even when GC fails so we don't leave a stopped registry
+// behind; any restart error is appended to the primary error, not
+// substituted.
+//
+// The prune step (post-GC) walks the filesystem and removes repository
+// directories that have no tags — distribution's own garbage-collect
+// leaves those behind, causing /v2/_catalog to list "zombie" repos
+// with zero tags forever.
 func (r *GCRunner) doRun(ctx context.Context) (string, error) {
 	if out, err := r.supervisor(ctx, "stop", r.cfg.ServiceName); err != nil {
 		return out, fmt.Errorf("supervisorctl stop: %w (output: %s)", err, strings.TrimSpace(out))
@@ -155,22 +178,132 @@ func (r *GCRunner) doRun(ctx context.Context) (string, error) {
 
 	gcOut, gcErr := r.garbageCollect(ctx)
 
+	// Prune only runs when GC succeeded. A failed GC could leave the
+	// layout in a half-swept state; we'd rather leave repos alone than
+	// accidentally wipe data.
+	var pruneOut string
+	if gcErr == nil && r.cfg.PruneEmptyRepos {
+		pruned, err := r.pruneEmptyRepos()
+		if err != nil {
+			// Non-fatal: log + surface in output but don't fail the whole run.
+			r.log.Errorf("prune empty repos: %v", err)
+			pruneOut = "\n\nprune warning: " + err.Error()
+		}
+		if len(pruned) > 0 {
+			pruneOut = fmt.Sprintf("\n\npruned %d empty repositor%s:\n  %s",
+				len(pruned),
+				pluralY(len(pruned)),
+				strings.Join(pruned, "\n  "))
+		}
+	}
+
 	startOut, startErr := r.supervisor(ctx, "start", r.cfg.ServiceName)
+
+	combined := gcOut + pruneOut
 
 	switch {
 	case gcErr != nil && startErr != nil:
-		return gcOut + "\n\n--- restart also failed ---\n" + startOut,
+		return combined + "\n\n--- restart also failed ---\n" + startOut,
 			fmt.Errorf("gc failed (%w) AND restart failed: %v", gcErr, startErr)
 	case gcErr != nil:
 		// GC failed but registry is back up — the more useful signal.
-		return gcOut, fmt.Errorf("garbage-collect: %w", gcErr)
+		return combined, fmt.Errorf("garbage-collect: %w", gcErr)
 	case startErr != nil:
 		// GC succeeded but we couldn't restart — critical: registry is offline.
 		r.log.Errorf("GC succeeded but registry restart failed: %v; output: %s", startErr, startOut)
-		return gcOut + "\n\n--- restart failed (registry is OFFLINE) ---\n" + startOut,
+		return combined + "\n\n--- restart failed (registry is OFFLINE) ---\n" + startOut,
 			fmt.Errorf("restart registry: %w", startErr)
 	}
-	return gcOut, nil
+	return combined, nil
+}
+
+// pruneEmptyRepos walks <RegistryRootDir>/docker/registry/v2/repositories
+// and removes any repo whose _manifests/tags/ directory is empty, then
+// cleans up now-empty namespace parents. Returns the repo names
+// (relative to the repositories root) that were removed.
+//
+// Definition of a "repo" directory: any dir that contains a
+// _manifests/ child. This matches distribution's on-disk layout and
+// correctly handles nested names like alice/team/app (only the leaf
+// is a repo; the ancestors are namespace dirs).
+func (r *GCRunner) pruneEmptyRepos() ([]string, error) {
+	if r.cfg.RegistryRootDir == "" {
+		return nil, nil
+	}
+	reposRoot := filepath.Join(r.cfg.RegistryRootDir, "docker", "registry", "v2", "repositories")
+	info, err := os.Stat(reposRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("stat repositories root: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%s: not a directory", reposRoot)
+	}
+
+	var emptyRepos []string
+	walkErr := filepath.WalkDir(reposRoot, func(path string, d fs.DirEntry, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		if !d.IsDir() || path == reposRoot {
+			return nil
+		}
+		manifestsDir := filepath.Join(path, "_manifests")
+		if _, err := os.Stat(manifestsDir); err != nil {
+			if os.IsNotExist(err) {
+				return nil // not a repo, keep walking into sub-namespaces
+			}
+			return err
+		}
+		// It's a repo — check for any tag.
+		tagsDir := filepath.Join(manifestsDir, "tags")
+		entries, err := os.ReadDir(tagsDir)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if len(entries) > 0 {
+			// Still has tags; don't descend into repo internals.
+			return fs.SkipDir
+		}
+		rel, err := filepath.Rel(reposRoot, path)
+		if err != nil {
+			return err
+		}
+		emptyRepos = append(emptyRepos, filepath.ToSlash(rel))
+		// Skip descent so _manifests/_layers/_uploads aren't traversed.
+		return fs.SkipDir
+	})
+	if walkErr != nil {
+		return nil, walkErr
+	}
+
+	for _, rel := range emptyRepos {
+		if err := os.RemoveAll(filepath.Join(reposRoot, rel)); err != nil {
+			return emptyRepos, fmt.Errorf("remove %s: %w", rel, err)
+		}
+	}
+	// Walk up each removed repo's namespace parents and rmdir any that
+	// are now empty. os.Remove only succeeds on empty dirs, so we get
+	// the "stop at the first non-empty ancestor" semantics for free.
+	for _, rel := range emptyRepos {
+		dir := filepath.Dir(rel)
+		for dir != "." && dir != "" && dir != "/" {
+			if err := os.Remove(filepath.Join(reposRoot, dir)); err != nil {
+				break // non-empty or already gone
+			}
+			dir = filepath.Dir(dir)
+		}
+	}
+	return emptyRepos, nil
+}
+
+func pluralY(n int) string {
+	if n == 1 {
+		return "y"
+	}
+	return "ies"
 }
 
 func (r *GCRunner) supervisor(ctx context.Context, action, name string) (string, error) {
