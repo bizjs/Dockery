@@ -154,7 +154,7 @@ export default function TagList() {
             {pagedTags.map((tagInfo) => (
               <tr key={tagInfo.tag} className="border-b">
                 {canDelete && (
-                  <td className="px-4 py-3 w-10">
+                  <td className="px-4 py-3 w-10 align-middle *:[[role=checkbox]]:translate-y-0.5">
                     <Checkbox
                       checked={selectedSet.has(tagInfo.tag)}
                       onClick={(e) =>
@@ -168,8 +168,18 @@ export default function TagList() {
                 <td className="px-4 py-3 text-muted-foreground w-32">
                   {formatBinarySize(tagInfo.size)}
                 </td>
-                <td className="px-4 py-3 text-muted-foreground w-45 min-w-45">
-                  {tagInfo.created ? new Date(tagInfo.created).toLocaleString() : '-'}
+                <td className="px-4 py-3 text-muted-foreground w-[200px] min-w-[200px]">
+                  {tagInfo.created
+                    ? new Date(tagInfo.created).toLocaleString(undefined, {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false,
+                      })
+                    : '-'}
                 </td>
                 <td className="px-4 py-3 text-muted-foreground font-mono text-xs">
                   <div className="truncate">{tagInfo.digest ? tagInfo.digest : '-'}</div>
