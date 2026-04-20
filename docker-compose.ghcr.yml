@@ -12,7 +12,7 @@
 # production — rolling `:latest` can surprise you.
 services:
   dockery:
-    image: "${DOCKERY_IMAGE:-ghcr.io/bizjs/light-registry:latest}"
+    image: "${DOCKERY_IMAGE:-ghcr.io/bizjs/dockery:latest}"
     container_name: dockery
     restart: unless-stopped
     ports:

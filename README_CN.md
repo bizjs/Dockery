@@ -32,6 +32,40 @@ docker tag hello-world localhost:5001/demo/hello:1
 docker push localhost:5001/demo/hello:1
 ```
 
+## 正式部署
+
+生产环境直接拉预构建镜像 —— [`ghcr.io/bizjs/dockery`](https://github.com/bizjs/Dockery/pkgs/container/dockery),不要从源码构建。**生产必须钉具体版本号**,别用滚动的 `:latest`。TLS 请自挂反向代理(nginx / Caddy / Traefik);未启用 TLS 时,docker 客户端要把 `localhost:5001`(或实际地址)加进 `insecure-registries`。
+
+### 方式 A —— `docker run`
+
+```bash
+docker run -d \
+  --name dockery \
+  --restart unless-stopped \
+  -p 5001:5000 \
+  -v /srv/dockery:/data \
+  -e DOCKERY_ADMIN_PASSWORD='change-me-on-first-boot' \
+  -e REGISTRY_AUTH_TOKEN_REALM='https://registry.example.com/token' \
+  ghcr.io/bizjs/dockery:0.1.0
+```
+
+`-v /srv/dockery:/data` 把宿主目录 bind-mount 到容器,生产推荐(好备份)。快速尝试用 named volume(`-v dockery-data:/data`)也行。详见 [存储](#存储--data常用)。
+
+### 方式 B —— `docker compose`
+
+用仓库里的 [`docker-compose.ghcr.yml`](./docker-compose.ghcr.yml):
+
+```bash
+export DOCKERY_ADMIN_PASSWORD='change-me-on-first-boot'
+export REGISTRY_AUTH_TOKEN_REALM='https://registry.example.com/token'
+export DOCKERY_IMAGE='ghcr.io/bizjs/dockery:0.1.0'   # 钉版本
+
+docker compose -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.ghcr.yml up -d
+```
+
+首次启动会用 `DOCKERY_ADMIN_PASSWORD` 创建 admin,之后这个环境变量被忽略(改密去 UI 或用 `dockery-api user passwd`)。
+
 ## 用户与权限管理
 
 **Web UI（管理员菜单 → Manage users）** —— 创建用户、改角色、改密、启用/禁用、删除，以及通过 permissions 抽屉给 `write` / `view` 用户添加/编辑/撤销仓库模式。`view` 角色登录后不会看到删除按钮。所有用户都可在头像菜单里自助改密。
@@ -53,27 +87,61 @@ docker exec -it dockery dockery-api -conf /etc/dockery user delete alice
 
 ### 环境变量
 
-| 变量 | 默认值 | 用途 |
+按级别分组：**必须**(否则启动不了)、**常用**(生产几乎都要改)、**其他**(高级透传项)。
+
+**必须**
+
+| 变量 | 说明 |
+|---|---|
+| `DOCKERY_ADMIN_PASSWORD` | 首次启动的 admin 密码。`/data` 为空时必填,之后忽略。空 DB + 未设 → api 故意 fatal(不随机生成密码,避免日志泄漏)。 |
+
+**常用**(生产)
+
+| 变量 | 默认值 | 说明 |
 |---|---|---|
-| `DOCKERY_ADMIN_USERNAME` | `admin` | 首次启动的 admin 用户名 |
-| `DOCKERY_ADMIN_PASSWORD` | _首次启动必填_ | 首次启动的 admin 密码 |
-| `REGISTRY_AUTH_TOKEN_REALM` | `http://localhost:5001/token` | Docker CLI 回源 token 的 URL；必须与对外地址一致 |
-| `REGISTRY_STORAGE_*` | — | 透传给 distribution，切换存储后端 |
+| `REGISTRY_AUTH_TOKEN_REALM` | `http://localhost:5001/token` | distribution 在 `WWW-Authenticate` 里告诉 docker CLI 去哪拿 JWT。**必须是 docker CLI 实际能访问到的 URL**,例 `https://registry.example.com/token`。填错 → `docker push` 401。 |
+| `DOCKERY_ADMIN_USERNAME` | `admin` | 首次启动的 admin 用户名。users 表为空才生效。 |
+| `DOCKERY_IMAGE` *(仅 compose)* | `ghcr.io/bizjs/dockery:latest` | 固定镜像 tag,例如 `ghcr.io/bizjs/dockery:0.1.0`。 |
 
-其余项（token TTL、issuer、session cookie 等）在 `docker/rootfs/etc/dockery/config.yaml`；需要定制就挂自己的 `config.yaml` 到 `/etc/dockery/`。
+**其他**(高级)
 
-### 持久化
+| 变量 | 说明 |
+|---|---|
+| `REGISTRY_STORAGE_*` | 原样透传给 distribution,切 S3 / OSS / Azure 等存储后端。见 [distribution 配置文档](https://distribution.github.io/distribution/about/configuration/)。 |
+| 其他 `REGISTRY_*` | `REGISTRY_<SECTION>_<FIELD>` 都会被 distribution 消费(日志级别、HTTP header 等)。 |
+
+其余项(token TTL、issuer、session cookie 等)在 `docker/rootfs/etc/dockery/config.yaml`(打到镜像里);需要定制就挂自己的 `config.yaml` 到 `/etc/dockery/`。
+
+### 存储 —— `/data`(常用)
+
+所有持久化状态都在容器的 `/data` 下。生产环境**推荐用宿主目录 bind-mount**,备份和巡检就是文件系统操作:
+
+```bash
+-v /srv/dockery:/data      # docker run
+```
+
+```yaml
+# docker-compose.*.yml —— 替换掉 named volume
+volumes:
+  - /srv/dockery:/data
+```
+
+命名 volume(快速体验示例里用的)单机也完全够用,但宿主路径更好备份、快照、迁移。
+
+`/data` 结构:
 
 ```
 /data/
-├── registry/          镜像 blob
-├── db/dockery.db      SQLite（users / repo_permissions / audit_log）
+├── registry/          镜像 blob(默认 filesystem driver)
+├── db/dockery.db      SQLite(users / repo_permissions / audit_log)
 └── config/
-    ├── jwt-private.pem  Ed25519 私钥（0600），单一真源
-    └── jwt-jwks.json    由私钥每次启动派生
+    ├── jwt-private.pem  Ed25519 私钥(0600),单一真源
+    └── jwt-jwks.json    每次启动由私钥派生
 ```
 
-**备份 = `/data` 整包**。丢 `jwt-private.pem` → 签出去的 token 全废；丢 `dockery.db` → 用户表重置。
+**备份 = `/data` 整包**。丢 `jwt-private.pem` → 签出去的 token 全废;丢 `dockery.db` → 用户表重置。
+
+> 用 `REGISTRY_STORAGE_*` 切 S3 / OSS / Azure 只会搬 `registry/`,`db/` 和 `config/` 仍然需要挂 `/data`。
 
 ## 架构
 

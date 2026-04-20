@@ -32,6 +32,40 @@ docker tag hello-world localhost:5001/demo/hello:1
 docker push localhost:5001/demo/hello:1
 ```
 
+## Run in production
+
+Pull the prebuilt image — [`ghcr.io/bizjs/dockery`](https://github.com/bizjs/Dockery/pkgs/container/dockery) — instead of building from source. Pin a concrete version tag; rolling `:latest` can surprise you. Put TLS in front (nginx / Caddy / Traefik); until then, docker clients need `localhost:5001` (or your host) in `insecure-registries`.
+
+### Option A — `docker run`
+
+```bash
+docker run -d \
+  --name dockery \
+  --restart unless-stopped \
+  -p 5001:5000 \
+  -v /srv/dockery:/data \
+  -e DOCKERY_ADMIN_PASSWORD='change-me-on-first-boot' \
+  -e REGISTRY_AUTH_TOKEN_REALM='https://registry.example.com/token' \
+  ghcr.io/bizjs/dockery:0.1.0
+```
+
+`-v /srv/dockery:/data` bind-mounts a host directory — recommended in production for easy backup. A named volume (`-v dockery-data:/data`) is fine for a quick try. See [Storage](#storage--data-common).
+
+### Option B — `docker compose`
+
+Use [`docker-compose.ghcr.yml`](./docker-compose.ghcr.yml) from this repo:
+
+```bash
+export DOCKERY_ADMIN_PASSWORD='change-me-on-first-boot'
+export REGISTRY_AUTH_TOKEN_REALM='https://registry.example.com/token'
+export DOCKERY_IMAGE='ghcr.io/bizjs/dockery:0.1.0'   # pin a version
+
+docker compose -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.ghcr.yml up -d
+```
+
+First boot seeds the admin account; subsequent boots ignore `DOCKERY_ADMIN_PASSWORD` (change it via the UI or `dockery-api user passwd`).
+
 ## User & permission management
 
 **Web UI (admin menu → Manage users)** — create users, edit role, reset password, enable/disable, delete, and manage per-user repo patterns in a drawer for `write` / `view` accounts. Users with the `view` role don't see the tag-delete button. Everyone can self-service password change via the avatar menu.
@@ -53,20 +87,52 @@ Deleting or demoting the last admin is refused.
 
 ### Environment
 
-| Variable | Default | Purpose |
+Grouped by tier: **required** to boot, **common** to set in production, and **other** advanced passthroughs.
+
+**Required**
+
+| Variable | Notes |
+|---|---|
+| `DOCKERY_ADMIN_PASSWORD` | First-boot admin password. Required while `/data` is empty; ignored after the first admin exists. Unset + empty DB → api fatals intentionally (no random password generated, avoids leaking via logs). |
+
+**Common** (production)
+
+| Variable | Default | Notes |
 |---|---|---|
-| `DOCKERY_ADMIN_USERNAME` | `admin` | First-boot admin username |
-| `DOCKERY_ADMIN_PASSWORD` | _required on first boot_ | First-boot admin password |
-| `REGISTRY_AUTH_TOKEN_REALM` | `http://localhost:5001/token` | URL the docker CLI reaches for tokens; must match your external URL |
-| `REGISTRY_STORAGE_*` | — | Forwarded to distribution to switch storage backends |
+| `REGISTRY_AUTH_TOKEN_REALM` | `http://localhost:5001/token` | URL distribution advertises to the docker CLI in `WWW-Authenticate`. **Must be reachable from the CLI** — e.g. `https://registry.example.com/token`. Wrong value → `docker push` 401s. |
+| `DOCKERY_ADMIN_USERNAME` | `admin` | First-boot admin username. Only used when the users table is empty. |
+| `DOCKERY_IMAGE` *(compose only)* | `ghcr.io/bizjs/dockery:latest` | Pin a concrete tag, e.g. `ghcr.io/bizjs/dockery:0.1.0`. |
 
-Token TTL, issuer, session cookies, etc. live in `docker/rootfs/etc/dockery/config.yaml` (baked into the image). To customize, mount your own over `/etc/dockery/`.
+**Other** (advanced)
 
-### Persistence
+| Variable | Notes |
+|---|---|
+| `REGISTRY_STORAGE_*` | Forwarded verbatim to distribution. Switch blob backend to S3 / OSS / Azure, etc. See [distribution configuration](https://distribution.github.io/distribution/about/configuration/). |
+| Any other `REGISTRY_*` | `REGISTRY_<SECTION>_<FIELD>` is consumed by distribution (log level, HTTP headers, etc.). |
+
+Token TTL, issuer, session cookies etc. live in `docker/rootfs/etc/dockery/config.yaml` (baked into the image). To customize, mount your own over `/etc/dockery/`.
+
+### Storage — `/data` (common)
+
+All persistent state lives under a single container path, `/data`. In production, **bind-mount a host directory** onto it so backups and inspection are just filesystem operations:
+
+```bash
+-v /srv/dockery:/data      # docker run
+```
+
+```yaml
+# docker-compose.*.yml — replace the named volume
+volumes:
+  - /srv/dockery:/data
+```
+
+Named Docker volumes (as in the quick-start examples) also work and are fine for single-host setups, but a host path is easier to back up, snapshot, and migrate.
+
+Layout inside `/data`:
 
 ```
 /data/
-├── registry/          image blobs
+├── registry/          image blobs (filesystem driver, default)
 ├── db/dockery.db      SQLite (users / repo_permissions / audit_log)
 └── config/
     ├── jwt-private.pem  Ed25519 private key (0600) — single source of truth
@@ -74,6 +140,8 @@ Token TTL, issuer, session cookies, etc. live in `docker/rootfs/etc/dockery/conf
 ```
 
 **Back up `/data` as a whole.** Lose `jwt-private.pem` → all issued tokens are void; lose `dockery.db` → user table reset.
+
+> Switching blob storage to S3 / OSS / Azure via `REGISTRY_STORAGE_*` only moves `registry/`. `db/` and `config/` still need `/data` mounted.
 
 ## Architecture
 
