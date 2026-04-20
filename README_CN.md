@@ -179,6 +179,11 @@ docker run -p 5000:5000 distribution/distribution:3.1.0
 
 打 `v*` tag → GitHub Actions 构建并推送 `ghcr.io/<owner>/<repo>:<version>` 与 `:latest`（linux/amd64 + linux/arm64）。
 
+## 致谢
+
+- [`distribution/distribution`](https://github.com/distribution/distribution) —— Dockery 内嵌的 registry 协议实现。
+- [`joxit/docker-registry-ui`](https://github.com/joxit/docker-registry-ui) —— 设计 Dockery 的 catalog 与 tag 页面时参考了它的交互形态(布局、体积格式化、manifest 详情流)。Dockery 基于 React 19 完全重写,跑在自家带鉴权的 `/api/registry/*` 接口之上。
+
 ## License
 
 见 [LICENSE](LICENSE)。贡献请先开 issue / discussion。

@@ -179,6 +179,11 @@ docker run -p 5000:5000 distribution/distribution:3.1.0
 
 Push a `v*` tag → GitHub Actions builds and pushes `ghcr.io/<owner>/<repo>:<version>` and `:latest` (linux/amd64 + linux/arm64). One image, no `-ui` split.
 
+## Acknowledgments
+
+- [`distribution/distribution`](https://github.com/distribution/distribution) — the registry protocol implementation Dockery embeds.
+- [`joxit/docker-registry-ui`](https://github.com/joxit/docker-registry-ui) — referenced for UX patterns while designing Dockery's catalog and tag views (layout, size formatting, manifest-detail flows). Dockery reimplements them from scratch in React 19 on top of its own auth-aware `/api/registry/*` endpoints.
+
 ## License
 
 See [LICENSE](LICENSE). Contributions welcome — please open an issue or discussion first for larger changes.
