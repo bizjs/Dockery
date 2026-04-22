@@ -40,8 +40,10 @@ func ActionsFor(r Role) []string {
 // Rules (design.md §7.3):
 //  1. `registry:*` scopes (e.g. registry:catalog:*) are admin-only.
 //  2. admin users bypass pattern matching — requested actions pass through.
-//  3. write/view users must have at least one repo_pattern glob-matching
-//     the requested Name; if so, granted = requested ∩ role_actions.
+//  3. write/view users with NO patterns are unrestricted — their role
+//     actions apply to every repo (equivalent to having a "*" pattern).
+//  4. write/view users with at least one pattern must match at least one
+//     against the requested Name; granted = requested ∩ role_actions.
 func Match(role Role, patterns []string, requested Scope) []string {
 	// Rule 1: registry-scoped operations are admin-only.
 	if requested.Type == TypeRegistry {
@@ -56,8 +58,11 @@ func Match(role Role, patterns []string, requested Scope) []string {
 		return dedupePreserveOrder(requested.Actions)
 	}
 
-	// Rule 3: non-admin must match at least one pattern.
-	if !anyPatternMatches(patterns, requested.Name) {
+	// Rule 3: non-admin with zero patterns is unrestricted by pattern —
+	// fall through to role-action intersection so view/write users get
+	// their role's actions on every repo. Admin wires explicit patterns
+	// to clamp this down.
+	if len(patterns) > 0 && !anyPatternMatches(patterns, requested.Name) {
 		return nil
 	}
 

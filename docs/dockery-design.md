@@ -309,9 +309,9 @@ Authorization: Basic <base64(user:pass)>
 
 **处理步骤**：
 1. 解 Basic Auth → `users` 表 → bcrypt 比对 → 失败返 401（不暴露"用户是否存在"）；
-2. 解析每个 `scope`；对非 admin 用户，先判断是否存在 `repo_permissions` 行的 `repo_pattern` glob 命中 `scope.Name`；
+2. 解析每个 `scope`；对非 admin 用户：若 `repo_permissions` 为空则视作"不限制"放行；否则至少一条 `repo_pattern` glob 需命中 `scope.Name`；
 3. 确定本用户的 **role_actions**：`admin → 全集`、`write → {pull, push, delete}`、`view → {pull}`；
-4. 求交集：`final = requested.Actions ∩ role_actions`（仅当 pattern 命中或 user=admin）；
+4. 求交集：`final = requested.Actions ∩ role_actions`（当 pattern 命中、无 pattern、或 user=admin）；
 5. 拼装 JWT `access` claim（即使 `final` 为空也签发）；
 6. Ed25519 签名；
 7. 审计写一条 `token.issued`。
@@ -398,12 +398,14 @@ func Match(user User, requested Scope) (granted []string) {
     if user.Role == "admin" {
         return requested.Actions
     }
-    // write/view 必须至少有一条 pattern 命中
-    var matched bool
-    for _, p := range user.Permissions {
-        if glob.Match(p.RepoPattern, requested.Name) { matched = true; break }
+    // 空 pattern 列表 = 不限制（等价于 "*")；配一条即开始按 pattern 裁剪
+    if len(user.Permissions) > 0 {
+        var matched bool
+        for _, p := range user.Permissions {
+            if glob.Match(p.RepoPattern, requested.Name) { matched = true; break }
+        }
+        if !matched { return nil }
     }
-    if !matched { return nil }
 
     return intersect(requested.Actions, roleActions[user.Role])
 }
@@ -411,7 +413,8 @@ func Match(user User, requested Scope) (granted []string) {
 
 - glob 支持 `*`、`alice/*`、`alice/app`；不支持正则。多条命中等价（只要命中就过）。
 - `actions` 不再存在权限表中 —— 角色唯一决定能做什么。
-- 非 admin 用户拿不到 `registry:catalog:*`；UI 代理层通过过滤后的列表给 view/write 用户呈现 catalog。
+- **默认不限制**：view/write 用户在 `repo_permissions` 为空时可对所有 repo 执行其角色动作（view → pull all；write → pull/push/delete all）。管理员通过添加 pattern 来缩小范围。
+- 非 admin 用户拿不到 `registry:catalog:*`；UI 代理层通过过滤后的列表给 view/write 用户呈现 catalog（空 pattern → 全部可见）。
 
 ---
 

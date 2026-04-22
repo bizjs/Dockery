@@ -77,10 +77,10 @@ Three roles in the `users` table; `users.role` alone dictates actions (no per-ro
 | role    | registry:catalog:* | repo actions                     |
 |---------|--------------------|----------------------------------|
 | `admin` | yes                | all, on all repos                |
-| `write` | no                 | pull + push + delete on matched patterns |
-| `view`  | no                 | pull on matched patterns         |
+| `write` | no                 | pull + push + delete (see default below) |
+| `view`  | no                 | pull (see default below)         |
 
-`repo_permissions` stores one row per `(user_id, glob_pattern)`. `admin` bypasses this table.
+`repo_permissions` stores one row per `(user_id, glob_pattern)`. `admin` bypasses this table. **Default when the user has no rows: unrestricted — the role's actions apply to every repo.** Admin narrows this by adding patterns; the first pattern switches the user from "all repos" to "only repos matching any pattern". Applies to both the UI catalog filter and the docker CLI token realm.
 
 ### Frontend structure (`apps/web-ui/src/`)
 
@@ -96,7 +96,7 @@ Three roles in the `users` table; `users.role` alone dictates actions (no per-ro
 - `conf/` — yaml config schema (`conf.proto` + `dockery.go`).
 - `data/` + `data/ent/` — ent client + repo adapters for User / RepoPermission / AuditLog.
 - `biz/` — usecases: `user`, `permission`, `token` (JWT signing), `keystore` (Ed25519 + JWKS).
-- `service/` — HTTP handlers: `system`, `auth`, `user`, `permission` (stubbed — M3 TODO), `registry` (UI proxy), `token` (Docker CLI realm), `admin` (stubbed — M4 TODO).
+- `service/` — HTTP handlers: `system`, `auth`, `user`, `permission` (CRUD for `repo_permissions`), `registry` (UI proxy), `token` (Docker CLI realm), `admin` (GC / key rotation / audit).
 - `server/http.go` — kratoscarf wiring (ErrorEncoder / CORS / Secure / Recovery / RequestID / Validator / ResponseWrapper).
 - `server/routes.go` — three-tier grouping: public / session / session+admin.
 - `server/middleware.go` — `RequireSession`, `RequireAdmin`.
@@ -121,7 +121,7 @@ shadcn/ui in `components/ui/` (added via `pnpm ui`). Tailwind v4 via `@tailwindc
 
 - M1 ✅ skeleton + container + kratoscarf
 - M2 ✅ keys + tokens + users + CLI + registry token auth
-- M3 ⏳ UI session + login + admin/users page — **PermissionService handlers are stubs**; UI can't grant repo patterns yet (only CLI)
+- M3 ✅ UI session + login + admin/users page + UI-driven permission granting
 - M4 ⬜ GC / key rotation / audit log writes / README rebrand
 
 ## Release
