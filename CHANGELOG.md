@@ -2,6 +2,19 @@
 
 本文件记录 Dockery 的所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0] - 2026-04-22
+
+### 文档
+
+- add CHANGELOG.md and link it from both READMEs
+
+### 新增
+
+- **ci**: add git-cliff changelog automation on tag push
+- unrestricted access when no repo patterns; enrich manifest sizes
+## [0.2.0] - 2026-04-20
+
+
 ## [0.3.0] - 2026-04-21
 
 ### 新增
