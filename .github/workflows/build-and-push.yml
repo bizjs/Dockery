@@ -105,3 +105,77 @@ jobs:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+      # --- Changelog + GitHub Release (semi-automatic via git-cliff) ---
+      #
+      # Runs only after build + attestation succeed. If either fails,
+      # we skip publishing release notes to avoid announcing a broken
+      # image.
+
+      - name: Generate release notes for this tag
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          # --latest: just the section for the newest tag.
+          # --strip header: the template's "# Changelog" preamble is
+          # dropped so the output is exactly the `## [x.y.z]` block —
+          # suitable both as a GitHub Release body and as something we
+          # splice into the existing CHANGELOG.md further down.
+          args: --latest --strip header
+        env:
+          OUTPUT: RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          body_path: ${{ github.workspace }}/RELEASE_NOTES.md
+
+      # CHANGELOG.md on main is always "one commit ahead" of the latest
+      # tag's tree — acceptable for a metadata file. Uses a fresh
+      # checkout of main so we're not mutating the tag ref.
+      - name: Checkout main for CHANGELOG commit
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          path: main-checkout
+
+      - name: Splice release notes into CHANGELOG.md
+        # git-cliff's built-in --prepend inserts at position 0, which
+        # would push the new section ABOVE the "# Changelog" preamble
+        # and break the file's top-of-file shape. Use awk instead to
+        # insert right before the first existing `## [` heading, keeping
+        # the preamble and historical hand-written sections intact.
+        working-directory: main-checkout
+        run: |
+          notes="${{ github.workspace }}/RELEASE_NOTES.md"
+          if [ ! -s "$notes" ]; then
+            echo "release notes empty; nothing to splice"
+            exit 0
+          fi
+          awk -v notes="$notes" '
+            BEGIN { done=0 }
+            !done && /^## \[/ {
+              while ((getline line < notes) > 0) print line
+              print ""
+              done=1
+            }
+            { print }
+          ' CHANGELOG.md > CHANGELOG.md.new
+          mv CHANGELOG.md.new CHANGELOG.md
+
+      - name: Commit CHANGELOG update back to main
+        working-directory: main-checkout
+        run: |
+          if git diff --quiet CHANGELOG.md; then
+            echo "CHANGELOG.md unchanged; skipping commit"
+            exit 0
+          fi
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add CHANGELOG.md
+          # chore(…) so the commit itself is skipped by git-cliff and
+          # doesn't recursively show up in the next release's notes.
+          git commit -m "chore(changelog): ${{ github.ref_name }} [skip ci]"
+          git push origin main

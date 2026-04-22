@@ -127,3 +127,12 @@ shadcn/ui in `components/ui/` (added via `pnpm ui`). Tailwind v4 via `@tailwindc
 ## Release
 
 Push a `v*` tag → `.github/workflows/build-and-push.yml` builds & pushes `ghcr.io/<owner>/<repo>:latest` + `:<semver>` (multi-arch). No separate `-ui` image — Dockery ships as one image.
+
+### Changelog (semi-automatic via git-cliff)
+
+`cliff.toml` drives the generator. The release workflow, after a successful build, runs `git cliff --latest --strip header` to:
+
+1. Create/update the GitHub Release with the current tag's section as the body.
+2. Splice the same section into `CHANGELOG.md` on `main` right above the previous `## [x.y.z]` heading (plain awk — not `git cliff --prepend`, which would write above the `# Changelog` preamble) and push the result back with `[skip ci]` so it doesn't retrigger the build.
+
+**Implications for commit style**: commit messages are now the source of truth for the changelog. Use conventional-commit prefixes — `feat:`, `fix:`, `perf:`, `refactor:`, `docs:` land in sections; `chore:` / `ci:` / `build:` / `test:` / `style:` and merge commits are skipped; scopes render as bolded prefixes (`**registry**: …`). Unconventional messages fall through to an "其他" group so nothing disappears silently. Hand-written entries for `0.1.0`–`0.3.0` are preserved because the workflow only splices the `--latest` section.

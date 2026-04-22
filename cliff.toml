@@ -1,0 +1,66 @@
+# git-cliff configuration for Dockery.
+#
+# Workflow (CI, build-and-push.yml):
+#   1. Tag push triggers image build.
+#   2. `git cliff --latest --strip header` → RELEASE_NOTES.md
+#      (attached to the GitHub Release body).
+#   3. awk splices that same section into CHANGELOG.md on main above
+#      the first existing `## [` heading (we don't use `--prepend`
+#      because it writes above the "# Changelog" preamble), then a
+#      bot commits back to main with [skip ci].
+#
+# The `header` block below is only emitted on a full regen via
+# `git cliff -o CHANGELOG.md`. CI always passes `--strip header`, so
+# this is documentation + a safety net for one-off rebuilds.
+
+[changelog]
+header = """
+# Changelog
+
+本文件记录 Dockery 的所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
+
+"""
+
+# Whitespace control notes:
+#   `{%- ... -%}` trims the newline/space on the tag's left/right side
+#   so we don't bleed blank lines into the rendered markdown. The
+#   explicit blank line after `## [x.y.z] - …` is intentional — it's
+#   what Keep-a-Changelog uses between heading and sections.
+body = """
+{% if version -%}
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{%- else -%}
+## [Unreleased]
+{%- endif %}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group }}
+{% for commit in commits %}
+- {% if commit.scope %}**{{ commit.scope }}**: {% endif %}{{ commit.message | trim }}
+{%- endfor %}
+{% endfor %}
+"""
+
+footer = ""
+trim = true
+
+[git]
+conventional_commits = true
+# Unconventional messages still land in the changelog under "其他" so
+# nothing silently disappears; tweak the parsers if that becomes noisy.
+filter_unconventional = false
+split_commits = false
+
+commit_parsers = [
+  { message = "^feat", group = "新增" },
+  { message = "^fix", group = "修复" },
+  { message = "^perf", group = "性能" },
+  { message = "^refactor", group = "变更" },
+  { message = "^docs", group = "文档" },
+  { message = "^(chore|ci|build|test|style)", skip = true },
+  { message = "^Merge", skip = true },
+  { message = ".*", group = "其他" },
+]
+
+filter_commits = false
+topo_order = false
+sort_commits = "newest"
