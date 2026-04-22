@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"api/internal/biz"
@@ -161,11 +162,89 @@ func (s *RegistryService) GetManifest(ctx *router.Context) error {
 	}
 	// Manifest is raw JSON; pass through as a structured map so the
 	// envelope is still valid JSON and UI can traverse fields.
-	var manifest any
+	var manifest map[string]any
 	if err := json.Unmarshal(body, &manifest); err != nil {
 		return response.ErrInternal.WithCause(err)
 	}
+	// For manifest lists / OCI image indexes, the per-entry `size` is the
+	// size of the child manifest JSON (a few KB), not the image size. Fetch
+	// each child manifest and inject `imageSize` (config + layers) so the
+	// UI can show a meaningful total.
+	s.enrichManifestList(ctx, name, manifest)
 	return ctx.Success(manifest)
+}
+
+// enrichManifestList mutates a manifest-list response in place, adding
+// an `imageSize` field to each entry in `manifests[]` and at the top
+// level. No-op if the response isn't a manifest list. Errors fetching
+// individual child manifests leave that entry's imageSize at 0; the
+// aggregate still reflects whichever fetches succeeded.
+func (s *RegistryService) enrichManifestList(ctx *router.Context, name string, manifest map[string]any) {
+	entries, ok := manifest["manifests"].([]any)
+	if !ok || len(entries) == 0 {
+		return
+	}
+
+	sizes := make([]int64, len(entries))
+	var wg sync.WaitGroup
+	for i, entryAny := range entries {
+		entry, ok := entryAny.(map[string]any)
+		if !ok {
+			continue
+		}
+		digest, _ := entry["digest"].(string)
+		if digest == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(idx int, digest string) {
+			defer wg.Done()
+			sizes[idx] = s.fetchImageSize(ctx, name, digest)
+		}(i, digest)
+	}
+	wg.Wait()
+
+	var total int64
+	for i, sz := range sizes {
+		entry, ok := entries[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		entry["imageSize"] = sz
+		total += sz
+	}
+	manifest["imageSize"] = total
+}
+
+// fetchImageSize pulls a single-arch manifest by digest and returns
+// config.size + Σ layers[].size. Returns 0 on any failure; callers
+// treat 0 as "unknown" and keep going.
+func (s *RegistryService) fetchImageSize(ctx *router.Context, name, digest string) int64 {
+	status, body, _, err := s.forward(ctx, http.MethodGet,
+		fmt.Sprintf("/v2/%s/manifests/%s", name, digest),
+		biz.RegistryAccess{Type: "repository", Name: name, Actions: []string{"pull"}})
+	if err != nil || status != http.StatusOK {
+		return 0
+	}
+	var m struct {
+		Config *struct {
+			Size int64 `json:"size"`
+		} `json:"config"`
+		Layers []struct {
+			Size int64 `json:"size"`
+		} `json:"layers"`
+	}
+	if err := json.Unmarshal(body, &m); err != nil {
+		return 0
+	}
+	var size int64
+	if m.Config != nil {
+		size += m.Config.Size
+	}
+	for _, l := range m.Layers {
+		size += l.Size
+	}
+	return size
 }
 
 // DeleteManifest supports deletion by either tag or digest. If the
@@ -373,10 +452,14 @@ func isDigest(ref string) bool {
 }
 
 // filterByPatterns keeps only repo names matched by any of patterns.
-// Admin callers should never reach this path.
+// Admin callers should never reach this path. An empty pattern list
+// means "no restriction" — the user sees every repo (mirrors
+// scope.Match Rule 3). Admin narrows this by adding patterns.
 func filterByPatterns(repos, patterns []string) []string {
 	if len(patterns) == 0 {
-		return []string{}
+		out := make([]string, len(repos))
+		copy(out, repos)
+		return out
 	}
 	out := make([]string, 0, len(repos))
 	for _, r := range repos {

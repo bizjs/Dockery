@@ -325,7 +325,9 @@ export default function UsersPage() {
             </SheetTitle>
             <SheetDescription>
               Repo patterns matched by this user. Role <strong>{s.permsTarget?.role}</strong>{' '}
-              determines allowed actions on matched repos.
+              determines allowed actions on matched repos. With no patterns,
+              the user is unrestricted and the role applies to every repo —
+              add patterns to limit access.
             </SheetDescription>
           </SheetHeader>
 
@@ -378,7 +380,7 @@ export default function UsersPage() {
                   {!s.permsLoading && s.perms.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={3} className="text-center py-6 text-muted-foreground">
-                        No patterns yet. User cannot access any repo.
+                        No patterns. User is unrestricted — role applies to every repo.
                       </TableCell>
                     </TableRow>
                   )}

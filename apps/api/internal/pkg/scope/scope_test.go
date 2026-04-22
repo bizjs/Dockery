@@ -145,6 +145,24 @@ func TestMatch_ViewRoleOnlyPull(t *testing.T) {
 	}
 }
 
+func TestMatch_EmptyPatternsUnrestricted(t *testing.T) {
+	// Empty patterns = unrestricted. View/write users with no grants
+	// get their role's actions on every repo. Admin adds patterns to
+	// clamp this down.
+	sc := Scope{Type: TypeRepository, Name: "anywhere", Actions: []string{"pull"}}
+	if got := Match(RoleView, nil, sc); !reflect.DeepEqual(got, []string{"pull"}) {
+		t.Errorf("view empty patterns pull: got %v", got)
+	}
+	sc.Actions = []string{"push"}
+	if got := Match(RoleView, nil, sc); len(got) != 0 {
+		t.Errorf("view empty patterns push: expected empty (role lacks push), got %v", got)
+	}
+	sc.Actions = []string{"pull", "push", "delete"}
+	if got := Match(RoleWrite, nil, sc); !reflect.DeepEqual(got, []string{"pull", "push", "delete"}) {
+		t.Errorf("write empty patterns full: got %v", got)
+	}
+}
+
 func TestMatch_WildcardExpansion(t *testing.T) {
 	patterns := []string{"*"}
 	// write user asks "*" actions on matched repo → gets pull+push+delete

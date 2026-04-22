@@ -71,6 +71,12 @@ interface ManifestEntry {
   mediaType?: string;
   digest?: string;
   size?: number;
+  /**
+   * Real image size (config + layers) for this platform, injected by the
+   * dockery-api proxy. Distinct from spec `size` which is just the child
+   * manifest JSON's byte count.
+   */
+  imageSize?: number;
   platform?: {
     architecture?: string;
     os?: string;
@@ -87,6 +93,8 @@ interface ManifestV2 {
   layers?: Array<{ mediaType?: string; size?: number; digest?: string }>;
   // Manifest list fields
   manifests?: ManifestEntry[];
+  /** Aggregated image size across all platforms; proxy-injected. */
+  imageSize?: number;
 }
 
 const MANIFEST_LIST_MEDIA_TYPES = new Set([
@@ -155,14 +163,18 @@ export async function getImageInfo(repository: string, tag: string): Promise<Ima
   // config can be done later via the drawer on demand.
   if (isManifestList(manifest)) {
     const entries = manifest.manifests ?? [];
+    // Prefer `imageSize` injected by dockery-api (real config+layers
+    // bytes); fall back to spec `size` only if the proxy didn't enrich
+    // — that value is the child manifest JSON size, not the image.
     const platforms: PlatformEntry[] = entries.map((e) => ({
       os: e.platform?.os,
       architecture: e.platform?.architecture,
       variant: e.platform?.variant,
       digest: e.digest ?? '',
-      size: e.size ?? 0,
+      size: e.imageSize ?? e.size ?? 0,
     }));
-    const totalSize = platforms.reduce((s, p) => s + p.size, 0);
+    const totalSize =
+      manifest.imageSize ?? platforms.reduce((s, p) => s + p.size, 0);
     return {
       imageName: repository,
       tag,
