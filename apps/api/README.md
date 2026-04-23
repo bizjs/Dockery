@@ -32,7 +32,7 @@ apps/api/
     ├── biz/            usecases: user, permission, token, keystore
     ├── service/        HTTP handlers (system, auth, user, permission, registry, token, admin)
     ├── server/         kratoscarf wiring + middleware (RequireSession, RequireAdmin) + route tree
-    └── pkg/scope/      Docker scope parsing + glob matching + role→actions
+    └── util/scope/     Docker scope parsing + glob matching + role→actions
 ```
 
 ## Common commands

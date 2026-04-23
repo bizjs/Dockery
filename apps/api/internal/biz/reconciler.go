@@ -49,8 +49,13 @@ func NewReconciler(
 	tokens *TokenIssuer,
 	audit *AuditUsecase,
 	upstream RegistryUpstreamURL,
+	cfg ReconcilerConfig,
 	logger log.Logger,
 ) *Reconciler {
+	interval := cfg.Interval
+	if interval <= 0 {
+		interval = 30 * time.Minute
+	}
 	return &Reconciler{
 		meta:        meta,
 		tokens:      tokens,
@@ -58,7 +63,7 @@ func NewReconciler(
 		upstreamURL: string(upstream),
 		client:      &http.Client{Timeout: 30 * time.Second},
 		logger:      log.NewHelper(log.With(logger, "module", "biz/reconciler")),
-		interval:    30 * time.Minute,
+		interval:    interval,
 	}
 }
 
@@ -226,19 +231,25 @@ var linkNextRe = regexp.MustCompile(`<([^>]+)>\s*;\s*rel="next"`)
 // the path is returned — host/scheme are stripped so the follow-up
 // request stays pinned to r.upstreamURL regardless of whatever
 // distribution advertises (which can be wrong in proxied setups).
+// Returns "" on any parse failure so pagination terminates cleanly
+// instead of concatenating a malformed URL.
 func nextPagePath(link string) string {
 	m := linkNextRe.FindStringSubmatch(link)
 	if len(m) < 2 {
 		return ""
 	}
-	if u, err := url.Parse(m[1]); err == nil && (u.Path != "" || u.RawQuery != "") {
-		path := u.Path
-		if u.RawQuery != "" {
-			path += "?" + u.RawQuery
-		}
-		return path
+	u, err := url.Parse(m[1])
+	if err != nil {
+		return ""
 	}
-	return m[1]
+	if u.Path == "" && u.RawQuery == "" {
+		return ""
+	}
+	path := u.Path
+	if u.RawQuery != "" {
+		path += "?" + u.RawQuery
+	}
+	return path
 }
 
 func toSet(xs []string) map[string]struct{} {

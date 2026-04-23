@@ -45,6 +45,17 @@ func NewRegistryUpstreamURL(c *conf.Dockery) RegistryUpstreamURL {
 	return RegistryUpstreamURL(u)
 }
 
+// NewReconcilerConfigFromConf derives the reconciler's knobs from yaml.
+// Zero/negative IntervalMinutes falls through to NewReconciler's 30-min
+// default, so leaving the section out means "use the default".
+func NewReconcilerConfigFromConf(c *conf.Dockery) ReconcilerConfig {
+	var interval time.Duration
+	if c.Reconciler.IntervalMinutes > 0 {
+		interval = time.Duration(c.Reconciler.IntervalMinutes) * time.Minute
+	}
+	return ReconcilerConfig{Interval: interval}
+}
+
 // NewTokenIssuerConfigFromConf derives a TokenIssuerConfig from the
 // yaml-loaded Dockery section. TTL is stored as seconds in config so
 // yaml stays human-readable; we convert to time.Duration here.

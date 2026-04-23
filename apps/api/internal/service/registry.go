@@ -6,12 +6,13 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"api/internal/biz"
-	"api/internal/pkg/scope"
+	"api/internal/util/scope"
 
 	"github.com/bizjs/kratoscarf/response"
 	"github.com/bizjs/kratoscarf/router"
@@ -188,10 +189,13 @@ func (s *RegistryService) Overview(ctx *router.Context) error {
 		items = filterMetaByPatterns(items, patterns)
 	}
 
-	// Search filter.
+	// Search filter. Allocates a fresh slice rather than `items[:0]`
+	// so the pre-filter slice — still held by any future caller who
+	// might decide to keep the unfiltered list around — isn't silently
+	// mutated. Cost is one per-request allocation of up to N pointers.
 	if q := strings.TrimSpace(ctx.Query("q")); q != "" {
 		lower := strings.ToLower(q)
-		filtered := items[:0]
+		filtered := make([]*biz.RepoMeta, 0, len(items))
 		for _, m := range items {
 			if strings.Contains(strings.ToLower(m.Repo), lower) {
 				filtered = append(filtered, m)
@@ -274,12 +278,13 @@ func toOverviewItem(m *biz.RepoMeta) OverviewItem {
 
 // filterMetaByPatterns mirrors filterByPatterns but on *biz.RepoMeta
 // slices. Empty patterns = unrestricted (matches the rule in
-// scope.Match for zero-pattern non-admin users).
+// scope.Match for zero-pattern non-admin users). Allocates a new slice
+// to avoid aliasing with the caller's view of `items`.
 func filterMetaByPatterns(items []*biz.RepoMeta, patterns []string) []*biz.RepoMeta {
 	if len(patterns) == 0 {
 		return items
 	}
-	out := items[:0]
+	out := make([]*biz.RepoMeta, 0, len(items))
 	for _, m := range items {
 		for _, p := range patterns {
 			if scope.MatchPattern(p, m.Repo) {
@@ -326,15 +331,15 @@ func sortSlice(items []*biz.RepoMeta, less func(a, b *biz.RepoMeta) bool, asc bo
 }
 
 // queryIntDefault reads an int query param, falling back on parse
-// errors. Separate from ctx.QueryInt (kratoscarf may or may not ship
-// one) so the handler stays self-contained.
+// errors. strconv.Atoi rejects trailing non-digits (`42abc` → default)
+// which fmt.Sscanf would silently accept.
 func queryIntDefault(ctx *router.Context, key string, def int) int {
 	raw := ctx.Query(key)
 	if raw == "" {
 		return def
 	}
-	var v int
-	if _, err := fmt.Sscanf(raw, "%d", &v); err != nil {
+	v, err := strconv.Atoi(raw)
+	if err != nil {
 		return def
 	}
 	return v

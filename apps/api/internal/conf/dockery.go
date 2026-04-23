@@ -10,13 +10,14 @@ package conf
 // Keeping this out of conf.proto lets us iterate on application-level
 // knobs without touching the Kratos-managed protobuf schema.
 type Dockery struct {
-	Keystore DockeryKeystore `json:"keystore" yaml:"keystore"`
-	Token    DockeryToken    `json:"token"    yaml:"token"`
-	Admin    DockeryAdmin    `json:"admin"    yaml:"admin"`
-	Session  DockerySession  `json:"session"  yaml:"session"`
-	GC       DockeryGC       `json:"gc"       yaml:"gc"`
-	Webhook  DockeryWebhook  `json:"webhook"  yaml:"webhook"`
-	Registry DockeryRegistry `json:"registry" yaml:"registry"`
+	Keystore   DockeryKeystore   `json:"keystore"   yaml:"keystore"`
+	Token      DockeryToken      `json:"token"      yaml:"token"`
+	Admin      DockeryAdmin      `json:"admin"      yaml:"admin"`
+	Session    DockerySession    `json:"session"    yaml:"session"`
+	GC         DockeryGC         `json:"gc"         yaml:"gc"`
+	Webhook    DockeryWebhook    `json:"webhook"    yaml:"webhook"`
+	Registry   DockeryRegistry   `json:"registry"   yaml:"registry"`
+	Reconciler DockeryReconciler `json:"reconciler" yaml:"reconciler"`
 }
 
 // DockeryKeystore is the filesystem location of the Ed25519 signing
@@ -104,6 +105,18 @@ type DockeryRegistry struct {
 	// into /v2/ (reconciler, meta refresh, proxy). Default:
 	// http://127.0.0.1:5001.
 	UpstreamURL string `json:"upstream_url" yaml:"upstream_url"`
+}
+
+// DockeryReconciler tunes the background drift-detector that keeps
+// repo_meta aligned with distribution's /v2/_catalog when webhook
+// events are lost. Interval only — the reconciler's other parameters
+// (startup delay, upstream timeout) are internal defaults because
+// there's been no case for tweaking them.
+type DockeryReconciler struct {
+	// IntervalMinutes is how often the reconciler does a full catalog
+	// diff. Default: 30. Lowering helps in environments with flaky
+	// webhook delivery; raising saves upstream load on huge registries.
+	IntervalMinutes int `json:"interval_minutes" yaml:"interval_minutes"`
 }
 
 // DockerySession configures the Web UI cookie session, backed by

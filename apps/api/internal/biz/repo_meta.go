@@ -14,8 +14,10 @@ import (
 
 // RepoMeta is the biz-layer view of the denormalized per-repository
 // snapshot powering the Catalog page. Mirrors the ent schema 1:1 but
-// exposes unix-second timestamps and concrete Go types so service/ and
-// UI layers don't import schema.PlatformInfo transitively.
+// exposes unix-second timestamps. Platforms is the raw schema type
+// (shared across layers) — the service layer still copies it into its
+// own response DTO rather than re-exporting, so API clients never see
+// the ent package's shape.
 type RepoMeta struct {
 	Repo         string
 	LatestTag    string

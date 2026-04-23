@@ -18,7 +18,7 @@ import (
 // against each UI request, we do it ambient on webhook events, and
 // coupling both paths through a shared helper made wire + testability
 // noisier than the redundancy is worth. If both grow more logic, merge
-// into a single internal/pkg/registryfetch package.
+// into a single internal/util/registryfetch package.
 
 const manifestListMediaTypes = "application/vnd.docker.distribution.manifest.list.v2+json," +
 	"application/vnd.oci.image.index.v1+json"

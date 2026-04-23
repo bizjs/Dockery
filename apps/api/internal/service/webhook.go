@@ -1,7 +1,7 @@
 package service
 
 import (
-	"encoding/json"
+	"context"
 	"strings"
 
 	"api/internal/biz"
@@ -9,6 +9,15 @@ import (
 	"github.com/bizjs/kratoscarf/response"
 	"github.com/bizjs/kratoscarf/router"
 )
+
+// repoMetaRefresher is the slice of RepoMetaUsecase this handler uses.
+// Declaring it as an interface here (Go's structural typing) keeps
+// webhook.go testable without spinning up the real refresh worker.
+// *biz.RepoMetaUsecase satisfies it naturally.
+type repoMetaRefresher interface {
+	EnqueueRefresh(repo string)
+	IncrementPull(ctx context.Context, repo string)
+}
 
 // WebhookService receives distribution's notification events and
 // translates them into RepoMeta refresh / pull-count writes. Mounted at
@@ -21,7 +30,7 @@ import (
 // path is just a marker for humans reading the access log.
 type WebhookService struct {
 	secret *biz.WebhookSecret
-	meta   *biz.RepoMetaUsecase
+	meta   repoMetaRefresher
 }
 
 func NewWebhookService(secret *biz.WebhookSecret, meta *biz.RepoMetaUsecase) *WebhookService {
@@ -127,6 +136,3 @@ func isManifestMediaType(mt string) bool {
 	return false
 }
 
-// Compile-time proof that envelope decodes the fields we care about —
-// stops silent drift if a typo'd field appears.
-var _ = json.Unmarshal

@@ -110,7 +110,7 @@ Three roles in the `users` table; `users.role` alone dictates actions (no per-ro
 - `server/http.go` — kratoscarf wiring (ErrorEncoder / CORS / Secure / Recovery / RequestID / Validator / ResponseWrapper).
 - `server/routes.go` — three-tier grouping: public / session / session+admin.
 - `server/middleware.go` — `RequireSession`, `RequireAdmin`.
-- `pkg/scope/` — Docker scope parsing + glob matching + role→actions mapping.
+- `util/scope/` — Docker scope parsing + glob matching + role→actions mapping.
 - `cmd/api/main.go` + `user_cmd.go` + `wire_gen.go` — entry point; `user` subcommand dispatches to `user_cmd.go` without starting HTTP.
 
 ### UI conventions
