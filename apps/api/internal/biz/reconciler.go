@@ -2,14 +2,10 @@ package biz
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"regexp"
 	"sync"
 	"time"
+
+	"api/internal/util/registryfetch"
 
 	"github.com/go-kratos/kratos/v2/log"
 )
@@ -21,13 +17,11 @@ import (
 // to the audit log — making event loss visible to operators rather
 // than a silent cache slowly going out of date.
 type Reconciler struct {
-	meta        *RepoMetaUsecase
-	tokens      *TokenIssuer
-	audit       *AuditUsecase
-	upstreamURL string
-	client      *http.Client
-	logger      *log.Helper
-	interval    time.Duration
+	meta     *RepoMetaUsecase
+	registry *registryfetch.Client
+	audit    *AuditUsecase
+	logger   *log.Helper
+	interval time.Duration
 
 	once   sync.Once
 	cancel context.CancelFunc
@@ -46,9 +40,8 @@ type ReconcilerConfig struct {
 // called, so tests can instantiate without a goroutine side effect.
 func NewReconciler(
 	meta *RepoMetaUsecase,
-	tokens *TokenIssuer,
+	registry *registryfetch.Client,
 	audit *AuditUsecase,
-	upstream RegistryUpstreamURL,
 	cfg ReconcilerConfig,
 	logger log.Logger,
 ) *Reconciler {
@@ -57,13 +50,11 @@ func NewReconciler(
 		interval = 30 * time.Minute
 	}
 	return &Reconciler{
-		meta:        meta,
-		tokens:      tokens,
-		audit:       audit,
-		upstreamURL: string(upstream),
-		client:      &http.Client{Timeout: 30 * time.Second},
-		logger:      log.NewHelper(log.With(logger, "module", "biz/reconciler")),
-		interval:    interval,
+		meta:     meta,
+		registry: registry,
+		audit:    audit,
+		logger:   log.NewHelper(log.With(logger, "module", "biz/reconciler")),
+		interval: interval,
 	}
 }
 
@@ -170,86 +161,23 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 	}
 }
 
-// fetchCatalog walks /v2/_catalog with keyset pagination. The upstream
-// Link header carries `<next-url>; rel="next"` when more pages exist;
-// we follow until it disappears.
+// fetchCatalog drains every page of /v2/_catalog via registryfetch's
+// keyset-cursor pagination.
 func (r *Reconciler) fetchCatalog(ctx context.Context) ([]string, error) {
 	const pageSize = 1000
-	path := fmt.Sprintf("/v2/_catalog?n=%d", pageSize)
 	var all []string
-	for path != "" {
-		body, linkHeader, err := r.getUpstream(ctx, path)
+	cursor := ""
+	for {
+		page, next, err := r.registry.Catalog(ctx, cursor, pageSize)
 		if err != nil {
 			return nil, err
 		}
-		var resp struct {
-			Repositories []string `json:"repositories"`
+		all = append(all, page...)
+		if next == "" {
+			return all, nil
 		}
-		if err := json.Unmarshal(body, &resp); err != nil {
-			return nil, fmt.Errorf("parse catalog: %w", err)
-		}
-		all = append(all, resp.Repositories...)
-		path = nextPagePath(linkHeader)
+		cursor = next
 	}
-	return all, nil
-}
-
-// getUpstream mints a registry:catalog:* JWT and fetches the given path
-// (may be relative). Returns body + Link header for pagination follow.
-func (r *Reconciler) getUpstream(ctx context.Context, path string) ([]byte, string, error) {
-	token, err := r.tokens.IssueRegistryToken("dockery-reconciler",
-		[]RegistryAccess{{Type: "registry", Name: "catalog", Actions: []string{"*"}}})
-	if err != nil {
-		return nil, "", fmt.Errorf("sign: %w", err)
-	}
-	fullURL := r.upstreamURL + path
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
-	if err != nil {
-		return nil, "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return nil, "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("upstream %s → %d", fullURL, resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, "", err
-	}
-	return body, resp.Header.Get("Link"), nil
-}
-
-// linkNextRe matches the conventional distribution Link header:
-// `<http://…?n=…&last=…>; rel="next"`.
-var linkNextRe = regexp.MustCompile(`<([^>]+)>\s*;\s*rel="next"`)
-
-// nextPagePath extracts the URL path from a registry Link header. Only
-// the path is returned — host/scheme are stripped so the follow-up
-// request stays pinned to r.upstreamURL regardless of whatever
-// distribution advertises (which can be wrong in proxied setups).
-// Returns "" on any parse failure so pagination terminates cleanly
-// instead of concatenating a malformed URL.
-func nextPagePath(link string) string {
-	m := linkNextRe.FindStringSubmatch(link)
-	if len(m) < 2 {
-		return ""
-	}
-	u, err := url.Parse(m[1])
-	if err != nil {
-		return ""
-	}
-	if u.Path == "" && u.RawQuery == "" {
-		return ""
-	}
-	path := u.Path
-	if u.RawQuery != "" {
-		path += "?" + u.RawQuery
-	}
-	return path
 }
 
 func toSet(xs []string) map[string]struct{} {

@@ -184,25 +184,51 @@ func (s *RegistryService) Overview(ctx *router.Context) error {
 		return err
 	}
 
+	q := strings.TrimSpace(ctx.Query("q"))
+	sortName := ctx.Query("sort")
+	direction := ctx.Query("direction")
+	page := queryIntDefault(ctx, "page", 0)
+	pageSize := queryIntDefault(ctx, "page_size", 50)
+
+	// Resolve per-user pattern list. Admin bypasses the table; an
+	// empty pattern list for non-admin users also means "unrestricted"
+	// (see scope.Match Rule 3 / design §7.3).
+	var patterns []string
+	if user.Role != "admin" {
+		patterns, err = s.listPatterns(ctx, user.ID)
+		if err != nil {
+			return response.ErrInternal.WithCause(err)
+		}
+	}
+
+	// Fast path: no pattern restriction (admin or unrestricted
+	// non-admin) → filter/sort/paginate entirely in SQL. Scales to
+	// large registries without loading every row into process memory.
+	if user.Role == "admin" || len(patterns) == 0 {
+		bizPage, err := s.meta.QueryPage(ctx.Context(), biz.OverviewFilter{
+			Query:     q,
+			Sort:      parseSort(sortName),
+			Direction: parseDirection(direction, sortName),
+			Page:      clampNonNeg(page),
+			PageSize:  pageSize,
+		})
+		if err != nil {
+			return response.ErrInternal.WithCause(err)
+		}
+		return ctx.Success(toOverviewResponse(bizPage, page, pageSize))
+	}
+
+	// Pattern-restricted path: segment-aware globs (e.g. `alice/*`
+	// matches `alice/X` but not `alice/X/Y`) don't translate cleanly
+	// to SQL, so we keep the Go-side filter here. Same upper bound as
+	// SQL path (500 page size); practical pattern users have tiny
+	// match sets so the full-list pull is cheap.
 	items, err := s.meta.List(ctx.Context())
 	if err != nil {
 		return response.ErrInternal.WithCause(err)
 	}
-
-	// Per-user pattern filter. Admin bypasses.
-	if user.Role != "admin" {
-		patterns, err := s.listPatterns(ctx, user.ID)
-		if err != nil {
-			return response.ErrInternal.WithCause(err)
-		}
-		items = filterMetaByPatterns(items, patterns)
-	}
-
-	// Search filter. Allocates a fresh slice rather than `items[:0]`
-	// so the pre-filter slice — still held by any future caller who
-	// might decide to keep the unfiltered list around — isn't silently
-	// mutated. Cost is one per-request allocation of up to N pointers.
-	if q := strings.TrimSpace(ctx.Query("q")); q != "" {
+	items = filterMetaByPatterns(items, patterns)
+	if q != "" {
 		lower := strings.ToLower(q)
 		filtered := make([]*biz.RepoMeta, 0, len(items))
 		for _, m := range items {
@@ -212,35 +238,27 @@ func (s *RegistryService) Overview(ctx *router.Context) error {
 		}
 		items = filtered
 	}
-
-	// Sort.
-	sortField := ctx.Query("sort")
-	if sortField == "" {
-		sortField = "name"
+	if sortName == "" {
+		sortName = "name"
 	}
-	direction := ctx.Query("direction")
 	if direction == "" {
-		if sortField == "name" {
+		if sortName == "name" {
 			direction = "asc"
 		} else {
 			direction = "desc"
 		}
 	}
-	sortMeta(items, sortField, direction)
-
+	sortMeta(items, sortName, direction)
 	total := len(items)
 
-	// Paginate.
-	page := queryIntDefault(ctx, "page", 0)
-	if page < 0 {
-		page = 0
-	}
-	pageSize := queryIntDefault(ctx, "page_size", 50)
 	if pageSize <= 0 {
 		pageSize = 50
 	}
 	if pageSize > 500 {
 		pageSize = 500
+	}
+	if page < 0 {
+		page = 0
 	}
 	start := page * pageSize
 	if start > total {
@@ -250,7 +268,6 @@ func (s *RegistryService) Overview(ctx *router.Context) error {
 	if end > total {
 		end = total
 	}
-
 	out := OverviewResponse{
 		Items:    make([]OverviewItem, 0, end-start),
 		Total:    total,
@@ -261,6 +278,66 @@ func (s *RegistryService) Overview(ctx *router.Context) error {
 		out.Items = append(out.Items, toOverviewItem(m))
 	}
 	return ctx.Success(out)
+}
+
+// parseSort maps the `sort` query param to the biz enum. Unknown values
+// fall back to name so a typo can't make the handler error out.
+func parseSort(s string) biz.OverviewSort {
+	switch s {
+	case "size":
+		return biz.OverviewSortSize
+	case "updated":
+		return biz.OverviewSortUpdated
+	case "tags":
+		return biz.OverviewSortTagCount
+	default:
+		return biz.OverviewSortName
+	}
+}
+
+// parseDirection defaults based on the sort column — asc for name
+// (A→Z), desc for everything else (biggest / newest / most first is
+// what people usually want on first click).
+func parseDirection(dir, sortName string) biz.OverviewDir {
+	if dir == "asc" {
+		return biz.OverviewAsc
+	}
+	if dir == "desc" {
+		return biz.OverviewDesc
+	}
+	if sortName == "" || sortName == "name" {
+		return biz.OverviewAsc
+	}
+	return biz.OverviewDesc
+}
+
+func clampNonNeg(n int) int {
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+func toOverviewResponse(p *biz.OverviewPage, page, pageSize int) OverviewResponse {
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+	if pageSize > 500 {
+		pageSize = 500
+	}
+	if page < 0 {
+		page = 0
+	}
+	out := OverviewResponse{
+		Items:    make([]OverviewItem, 0, len(p.Items)),
+		Total:    p.Total,
+		Page:     page,
+		PageSize: pageSize,
+	}
+	for _, m := range p.Items {
+		out.Items = append(out.Items, toOverviewItem(m))
+	}
+	return out
 }
 
 func toOverviewItem(m *biz.RepoMeta) OverviewItem {

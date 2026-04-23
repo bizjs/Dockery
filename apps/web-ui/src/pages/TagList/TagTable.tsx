@@ -78,7 +78,7 @@ export function TagTable({
               </Button>
             </TableHead>
             <TableHead className="px-4">Digest</TableHead>
-            <TableHead className="px-4">Architecture</TableHead>
+            <TableHead className="w-[260px] px-4">Architecture</TableHead>
             <TableHead className="px-4 text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>

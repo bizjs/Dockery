@@ -61,5 +61,12 @@ func (RepoMeta) Fields() []ent.Field {
 func (RepoMeta) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("repo").Unique(),
+		// Sort columns used by /api/registry/overview. Each index
+		// lets SQLite do the ORDER BY with a single pass over the
+		// index instead of a full table scan + in-memory sort.
+		index.Fields("size"),
+		index.Fields("created"),
+		index.Fields("tag_count"),
+		index.Fields("refreshed_at"),
 	}
 }

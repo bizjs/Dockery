@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"regexp"
 	"time"
 )
 
@@ -121,19 +123,54 @@ func (c *Client) ChildMeta(ctx context.Context, repo, digest string) ChildMeta {
 	return out
 }
 
-// get mints a pull-scoped JWT for the repo and issues the request.
-// Non-200 status codes surface as an error with a truncated body for
-// log readability.
-func (c *Client) get(ctx context.Context, repo, path, accept string) ([]byte, error) {
-	token, err := c.tokens.IssueRegistryToken(c.subject, []Access{
-		{Type: "repository", Name: repo, Actions: []string{"pull"}},
+// Catalog fetches one page of /v2/_catalog using the keyset scheme
+// distribution exposes. `cursor` is the last repo seen (empty for the
+// first page); `pageSize` caps items per response. Returns the repos
+// and the next-page cursor — empty cursor means we're at the end.
+//
+// Scoped registry:catalog:* so it's admin-only upstream; dockery-api
+// is the trust anchor that gates exposure of the result to end users.
+func (c *Client) Catalog(ctx context.Context, cursor string, pageSize int) (repos []string, next string, err error) {
+	path := fmt.Sprintf("/v2/_catalog?n=%d", pageSize)
+	if cursor != "" {
+		path += "&last=" + url.QueryEscape(cursor)
+	}
+	body, hdr, err := c.do(ctx, path, "", []Access{
+		{Type: "registry", Name: "catalog", Actions: []string{"*"}},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("sign: %w", err)
+		return nil, "", err
+	}
+	var resp struct {
+		Repositories []string `json:"repositories"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, "", fmt.Errorf("parse catalog: %w", err)
+	}
+	return resp.Repositories, nextCursor(hdr.Get("Link")), nil
+}
+
+// get is the repository-scoped shortcut most methods in this file
+// use — most of them only need pull on a single repo.
+func (c *Client) get(ctx context.Context, repo, path, accept string) ([]byte, error) {
+	body, _, err := c.do(ctx, path, accept, []Access{
+		{Type: "repository", Name: repo, Actions: []string{"pull"}},
+	})
+	return body, err
+}
+
+// do mints a JWT with the given access claim and issues the request.
+// Returns body + response headers so callers that need Link / digest
+// headers can read them. Non-200 status codes surface as an error
+// with a truncated body for log readability.
+func (c *Client) do(ctx context.Context, path, accept string, access []Access) ([]byte, http.Header, error) {
+	token, err := c.tokens.IssueRegistryToken(c.subject, access)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sign: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	if accept != "" {
@@ -141,17 +178,39 @@ func (c *Client) get(ctx context.Context, repo, path, accept string) ([]byte, er
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("upstream %s → %d: %s", path, resp.StatusCode, truncate(body))
+		return nil, nil, fmt.Errorf("upstream %s → %d: %s", path, resp.StatusCode, truncate(body))
 	}
-	return body, nil
+	return body, resp.Header, nil
+}
+
+// linkNextRe pulls the URL out of a standard `Link: <url>; rel="next"`
+// header. distribution sometimes proxies through an advertised
+// hostname that isn't reachable from our side, so we only parse the
+// URL for the `last` query param and rebuild the next path ourselves.
+var linkNextRe = regexp.MustCompile(`<([^>]+)>\s*;\s*rel="next"`)
+
+// nextCursor extracts the `last` query param from a Link: rel="next"
+// URL — that's the opaque cursor we hand back on the next Catalog call.
+// Returns "" on any parse failure so pagination terminates cleanly
+// instead of recursing with garbage.
+func nextCursor(link string) string {
+	m := linkNextRe.FindStringSubmatch(link)
+	if len(m) < 2 {
+		return ""
+	}
+	u, err := url.Parse(m[1])
+	if err != nil {
+		return ""
+	}
+	return u.Query().Get("last")
 }
 
 func truncate(b []byte) string {

@@ -174,7 +174,7 @@ export default function TagList() {
                 <td className="px-4 py-3 text-muted-foreground font-mono text-xs">
                   <div className="truncate">{tagInfo.digest ? tagInfo.digest : '-'}</div>
                 </td>
-                <td className="px-4 py-3 text-muted-foreground w-45">
+                <td className="px-4 py-3 text-muted-foreground w-[260px]">
                   {tagInfo.platforms && tagInfo.platforms.length > 0 ? (
                     (() => {
                       const { label, title } = compactArchLabel(tagInfo.platforms);

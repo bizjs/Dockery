@@ -30,6 +30,49 @@ type RepoMeta struct {
 	RefreshedAt  int64  // unix seconds
 }
 
+// OverviewSort selects which column to sort by in QueryPage.
+type OverviewSort int
+
+const (
+	OverviewSortName OverviewSort = iota
+	OverviewSortUpdated
+	OverviewSortSize
+	OverviewSortTagCount
+)
+
+// OverviewDir selects sort direction.
+type OverviewDir int
+
+const (
+	OverviewAsc OverviewDir = iota
+	OverviewDesc
+)
+
+// OverviewFilter is the input to QueryPage. Zero values mean sensible
+// defaults (name asc, first page of 50).
+type OverviewFilter struct {
+	// Query is a case-insensitive substring match on repo name.
+	// Empty string = no search filter.
+	Query string
+	// Sort is which column to ORDER BY.
+	Sort OverviewSort
+	// Direction is asc/desc. Sort is stabilized by a secondary repo-asc
+	// so results don't reshuffle across equal keys.
+	Direction OverviewDir
+	// Page is 0-based.
+	Page int
+	// PageSize is the LIMIT. Clamped to [1, 500] by the biz layer.
+	PageSize int
+}
+
+// OverviewPage is the result of QueryPage.
+type OverviewPage struct {
+	Items []*RepoMeta
+	// Total is the count after filter but before pagination, so the
+	// UI can render "Showing X–Y of N".
+	Total int
+}
+
 // RepoMetaRepo is the data-layer contract. Implemented in
 // internal/data/repo_meta.go.
 type RepoMetaRepo interface {
@@ -38,6 +81,12 @@ type RepoMetaRepo interface {
 	Delete(ctx context.Context, repo string) error
 	List(ctx context.Context) ([]*RepoMeta, error)
 	AllRepos(ctx context.Context) ([]string, error)
+	// QueryPage filters/sorts/paginates at the SQL layer for the
+	// Overview endpoint. Used when no per-user pattern filter applies
+	// (admin users or non-admins with no patterns) — the pattern case
+	// still goes through List() and in-memory filtering because the
+	// segment-aware glob semantics don't map cleanly onto SQLite.
+	QueryPage(ctx context.Context, f OverviewFilter) (*OverviewPage, error)
 	// IncrementPull bumps pull_count + last_pulled_at. Returns the
 	// number of rows affected — zero means the repo isn't in cache yet
 	// (never refreshed). Callers decide whether to enqueue a refresh
@@ -109,6 +158,22 @@ func (u *RepoMetaUsecase) Get(ctx context.Context, repo string) (*RepoMeta, erro
 
 func (u *RepoMetaUsecase) AllRepos(ctx context.Context) ([]string, error) {
 	return u.repo.AllRepos(ctx)
+}
+
+// QueryPage is the read-path for /api/registry/overview when the caller
+// has no per-user pattern restriction (admin or non-admin-with-no-
+// patterns). Clamps PageSize and delegates to the DB layer.
+func (u *RepoMetaUsecase) QueryPage(ctx context.Context, f OverviewFilter) (*OverviewPage, error) {
+	if f.PageSize <= 0 {
+		f.PageSize = 50
+	}
+	if f.PageSize > 500 {
+		f.PageSize = 500
+	}
+	if f.Page < 0 {
+		f.Page = 0
+	}
+	return u.repo.QueryPage(ctx, f)
 }
 
 // DeleteRepo is called by the reconciler when a repo has vanished

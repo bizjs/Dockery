@@ -5,18 +5,23 @@
  * search, pagination) is a single HTTP call with fully-populated rows.
  */
 
+import { useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  Check,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Copy,
   Package,
   RefreshCw,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
+import { copyText } from '@bizjs/biz-utils';
+import { toast } from 'sonner';
 
 import { useViewModel } from '@/lib/viewmodel';
 import { CatalogViewModel, type SortField } from './view-model';
@@ -64,7 +69,25 @@ function singlePlatformLabel(p: OverviewPlatform): string {
 export default function Catalog() {
   const vm = useViewModel(CatalogViewModel);
   const snapshot = vm.$useSnapshot();
-  const navigate = useNavigate();
+
+  // Track which row's copy button was most recently clicked so the
+  // icon swaps Copy → Check for ~1.5s as immediate visual feedback
+  // (toast handles the message; the inline swap confirms "yes, this
+  // button specifically fired").
+  const [copiedRepo, setCopiedRepo] = useState<string | null>(null);
+  const handleCopy = async (repo: string, tag: string) => {
+    const text = `${repo}:${tag}`;
+    try {
+      await copyText(text);
+      setCopiedRepo(repo);
+      toast.success(`Copied ${text}`);
+      setTimeout(() => {
+        setCopiedRepo((c) => (c === repo ? null : c));
+      }, 1500);
+    } catch {
+      toast.error('Copy failed');
+    }
+  };
 
   const pageCount = Math.max(1, Math.ceil(snapshot.total / snapshot.pageSize));
   const currentPage = Math.min(snapshot.page, pageCount - 1);
@@ -164,7 +187,7 @@ export default function Catalog() {
                 <TableHead className="w-[200px] px-4">
                   <SortButton field="updated" label="Updated" />
                 </TableHead>
-                <TableHead className="w-56 px-4">Architecture</TableHead>
+                <TableHead className="w-[260px] px-4">Architecture</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -194,23 +217,50 @@ export default function Catalog() {
                             title: singlePlatformLabel(r.platforms[0]),
                           }
                         : { label: '-', title: '' };
+                  const copied = copiedRepo === r.repo;
                   return (
-                    <TableRow
-                      key={r.repo}
-                      className="cursor-pointer"
-                      onClick={() => navigate(`/tag-list/${encodeURIComponent(r.repo)}`)}
-                    >
+                    <TableRow key={r.repo}>
                       <TableCell className="px-4 font-medium">
-                        <div className="flex items-center gap-2">
+                        {/* Only the image name drills — rest of the
+                            row is inert so accidental clicks on size
+                            or tag-count don't yank users away. Link
+                            makes right-click "open in new tab" work,
+                            and the hover treatment telegraphs the
+                            affordance (primary color + underline). */}
+                        <Link
+                          to={`/tag-list/${encodeURIComponent(r.repo)}`}
+                          className="group inline-flex items-center gap-2 text-foreground hover:text-primary"
+                        >
                           <Package className="h-4 w-4 text-primary shrink-0" />
-                          <span className="truncate">{r.repo}</span>
-                        </div>
+                          <span className="truncate group-hover:underline underline-offset-4">
+                            {r.repo}
+                          </span>
+                        </Link>
                       </TableCell>
                       <TableCell
-                        className="px-4 font-mono text-sm text-muted-foreground truncate"
+                        className="px-4 font-mono text-sm text-muted-foreground"
                         title={r.latest_tag}
                       >
-                        {r.latest_tag ?? '-'}
+                        {r.latest_tag ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="truncate">{r.latest_tag}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleCopy(r.repo, r.latest_tag!)}
+                              className="shrink-0 text-muted-foreground/60 hover:text-primary transition-colors"
+                              aria-label={`Copy ${r.repo}:${r.latest_tag}`}
+                              title={`Copy ${r.repo}:${r.latest_tag}`}
+                            >
+                              {copied ? (
+                                <Check className="h-3.5 w-3.5 text-primary" />
+                              ) : (
+                                <Copy className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                          </div>
+                        ) : (
+                          '-'
+                        )}
                       </TableCell>
                       <TableCell className="px-4 text-right text-sm text-muted-foreground tabular-nums">
                         {r.tag_count}
