@@ -72,13 +72,7 @@ Two auth paths share one permission model:
 
 ### Catalog cache (repo_meta)
 
-The Catalog page (`GET /api/registry/overview`) reads from a denormalized `repo_meta` table rather than fanning out to `/v2/` on every page load. The cache is kept current by three mechanisms:
-
-- **Webhook events** — distribution's `notifications` block POSTs every `push`/`pull`/`delete` to `/api/internal/registry-events` (auth: shared Bearer secret at `/data/config/webhook-secret`, auto-generated on first boot). Manifest push/delete → enqueue a per-repo refresh; manifest pull → increment `pull_count` + `last_pulled_at`. A single-goroutine worker deduplicates rapid-fire events.
-- **Reconciler** — on boot (3s delay, non-blocking) and every 30 min, diff `/v2/_catalog` against `repo_meta`; added repos enqueue a refresh, removed repos delete cache rows, and each discrepancy writes an audit entry (`registry.reconcile.added` / `registry.reconcile.removed`) so chronic webhook loss surfaces in the UI.
-- **Admin CLI** (future) — `dockery-api admin rebuild-cache` for manual recovery.
-
-Refresh itself = re-fetch the representative tag (prefer `latest`, else lexicographic last) → manifest + config blob → upsert `(repo, latest_tag, size, created, platforms, tag_count, refreshed_at)`. Multi-arch images walk all child manifests for accurate aggregate size + max `created`.
+See [docs/dockery-design.md §8.6](./docs/dockery-design.md) — that's the source of truth. Short version: the Catalog page reads a denormalized `repo_meta` table kept in sync by distribution webhooks + a periodic reconciler + the refresh worker in `biz/RepoMetaUsecase`. HTTP primitives live in `internal/util/registryfetch/` and are shared by biz and service/registry's `enrichManifestList`.
 
 ### Roles
 

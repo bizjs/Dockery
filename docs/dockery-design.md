@@ -250,8 +250,25 @@ CREATE TABLE audit_log (
   detail     TEXT                              -- JSON，额外上下文
 );
 
+-- 仓库元数据缓存（M3.5）。被 distribution 的 notifications 回调
+-- 和后台 reconciler 共同维持与 /v2/_catalog 的一致性。Catalog 页
+-- 的 /api/registry/overview 直接查这张表，避免每次翻页 N+1 manifest 拉取。
+CREATE TABLE repo_meta (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo           TEXT UNIQUE NOT NULL,
+  latest_tag     TEXT,                            -- 取 meta 用的代表 tag
+  tag_count      INTEGER NOT NULL DEFAULT 0,
+  size           INTEGER NOT NULL DEFAULT 0,      -- config.size + Σ layers.size
+  created        TEXT,                            -- ISO 8601 from config.created
+  platforms      TEXT,                            -- JSON: [{os, architecture, variant}]
+  pull_count     INTEGER NOT NULL DEFAULT 0,
+  last_pulled_at INTEGER,                         -- unix seconds, nullable
+  refreshed_at   INTEGER NOT NULL                 -- unix seconds; reconciler 用来判断陈旧
+);
+
 CREATE INDEX idx_audit_ts ON audit_log(ts DESC);
 CREATE INDEX idx_perm_user ON repo_permissions(user_id);
+CREATE UNIQUE INDEX idx_repo_meta_repo ON repo_meta(repo);
 ```
 
 ### 5.2 文件系统布局（/data）
@@ -292,12 +309,16 @@ CREATE INDEX idx_perm_user ON repo_permissions(user_id);
 | `/api/users/{id}/permissions` | GET/POST | Session + admin | 用户的 repo 权限列表 |
 | `/api/permissions/{id}` | PATCH/DELETE | Session + admin | 单条权限管理 |
 | `/api/registry/catalog` | GET | Session | UI 代理：列 repo |
+| `/api/registry/overview` | GET | Session | Catalog 页一次性拿（repo + 代表 tag 的 size/created/平台），读 `repo_meta` 缓存 |
 | `/api/registry/{name}/tags` | GET | Session | UI 代理：列 tag |
 | `/api/registry/{name}/manifests/{ref}` | GET/DELETE | Session | UI 代理：manifest |
 | `/api/registry/{name}/blobs/{digest}` | GET | Session | UI 代理：config blob |
+| `/api/internal/registry-events` | POST | Bearer（共享密钥） | distribution 回调入口；见 §8.6 |
 | `/api/admin/gc` | POST | Session + admin | 触发垃圾回收 |
 | `/api/admin/rotate-signing-key` | POST | Session + admin | 密钥轮换（重启 registry） |
 | `/api/audit` | GET | Session + admin | 审计日志查询 |
+
+`/api/internal/*` 在 nginx 层 `return 404`；真实调用只从容器回环进来（distribution 和 dockery-api 同容器，走 `127.0.0.1:3001`）。
 
 ### 6.2 /token 端点（关键）
 
@@ -475,6 +496,39 @@ UI admin 页点"执行 GC"：
 4. `supervisorctl restart registry` 让 registry 重新读 JWKS；
 5. 用旧密钥签的 token 全部失效（用户会被迫重新 docker login + 重新访问 UI）；
 6. 写 audit `key.rotated`。
+
+### 8.6 Catalog cache（repo_meta）三路同步（M3.5）
+
+Catalog 页 `GET /api/registry/overview` 从 `repo_meta` 表直接读，不再对每个 repo 扇出 manifest 请求。缓存由三条链路共同维持一致：
+
+**1. distribution notifications（主路径）**
+
+`docker/rootfs/etc/docker/registry/config.yml` 的 `notifications.endpoints` 块让 registry 在每次 push/pull/delete 后 POST 事件到 `http://127.0.0.1:3001/api/internal/registry-events`，Authorization 是共享 Bearer 密钥（`/data/config/webhook-secret`，首次启动由 dockery-api 随机生成 32 字节 hex，supervisord 启动 registry 前 sed 替换进 `__WEBHOOK_SECRET__` 占位符）。
+
+事件分发表（`service/webhook.go`）：
+
+| action | mediaType 是 manifest 系 | 行为 |
+|---|---|---|
+| `push` | ✅ | `EnqueueRefresh(repo)`（同 repo 的多条事件会被去重） |
+| `delete` | ✅ | `EnqueueRefresh(repo)`（refresh 路径检测到 0 tag 会删 row） |
+| `pull` | ✅ | `IncrementPull(repo)`；如果 row 不存在，自动 EnqueueRefresh |
+| 任意 | blob（layer / rootfs） | 忽略，避免 layer 上传刷屏 |
+
+**2. Refresh worker**
+
+`biz/RepoMetaUsecase` 里的单 goroutine 消费 `chan string`，去重 set 保证同 repo 同时刻只有一次刷新在进行。`RefreshOne`：拉 tags → 选代表 tag（`latest` 优先，否则 lexicographic 末位）→ `registryfetch.Client.Manifest` → 如果是 manifest list 则并发拉各子 manifest + config blob（取 `config.size + Σ layers.size` 和最大 `config.created`）→ upsert `repo_meta`。短退避重试（1s + 3s），彻底失败交给 reconciler 兜底。
+
+**3. Reconciler（兜底路径）**
+
+`biz/Reconciler` 启动时延 3s 启动，之后每 `DockeryReconciler.IntervalMinutes`（默认 30 min）做一次全量 diff：`GET /v2/_catalog` keyset 分页（`n=1000`）拿 upstream 全集 → `AllRepos()` 拿 cache → 双向 diff：
+- upstream ∖ cache → `EnqueueRefresh`，写 audit `registry.reconcile.added`
+- cache ∖ upstream → `DeleteRepo`，写 audit `registry.reconcile.removed`
+
+审计条目让"webhook 丢包"这种默默发生的事情变得可见——同一个 repo 反复被 reconcile 添加/删除说明 notifications 链路有问题。
+
+**共享 HTTP 客户端**
+
+dockery-api 自己对 `/v2/` 的所有调用都走 `internal/util/registryfetch.Client`，统一 Accept 头、认证（mint pull-scoped JWT）、超时、错误消息截断。biz（refresh worker + reconciler）和 service（UI 代理的 manifest-list enrich 子路径）共用一份实现；service 层其它 UI 代理请求走 `RegistryService.forward()` 透传路径，因为它要保留 Docker-Content-Digest 等响应头。
 
 ---
 
