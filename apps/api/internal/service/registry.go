@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,21 +37,31 @@ type RegistryService struct {
 	tokens      *biz.TokenIssuer
 	audit       *biz.AuditUsecase
 	maintenance *biz.Maintenance
+	meta        *biz.RepoMetaUsecase
 	upstream    string
 	client      *http.Client
 }
 
-// NewRegistryService wires the proxy. Upstream is pinned to the
-// loopback address the supervisord starts registry on; when the
-// container moves to multi-host, this becomes configurable.
-func NewRegistryService(users *biz.UserUsecase, perms *biz.PermissionUsecase, tokens *biz.TokenIssuer, audit *biz.AuditUsecase, maintenance *biz.Maintenance) *RegistryService {
+// NewRegistryService wires the proxy. Upstream comes from conf so dev
+// setups with different ports share the same code path as the bundled
+// container (where supervisord starts registry on 127.0.0.1:5001).
+func NewRegistryService(
+	users *biz.UserUsecase,
+	perms *biz.PermissionUsecase,
+	tokens *biz.TokenIssuer,
+	audit *biz.AuditUsecase,
+	maintenance *biz.Maintenance,
+	meta *biz.RepoMetaUsecase,
+	upstream biz.RegistryUpstreamURL,
+) *RegistryService {
 	return &RegistryService{
 		users:       users,
 		perms:       perms,
 		tokens:      tokens,
 		audit:       audit,
 		maintenance: maintenance,
-		upstream:    "http://127.0.0.1:5001",
+		meta:        meta,
+		upstream:    string(upstream),
 		client:      &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -109,6 +121,223 @@ func (s *RegistryService) Catalog(ctx *router.Context) error {
 	}
 
 	return ctx.Success(out)
+}
+
+// --- Overview: cache-backed aggregated view for the Catalog UI ---
+
+// OverviewPlatform mirrors schema.PlatformInfo but stays in the service
+// layer so the frontend doesn't reach across packages to type its
+// response. `omitempty` keeps responses compact when a field is empty.
+type OverviewPlatform struct {
+	Os           string `json:"os,omitempty"`
+	Architecture string `json:"architecture,omitempty"`
+	Variant      string `json:"variant,omitempty"`
+}
+
+// OverviewItem is one row in the Catalog table.
+type OverviewItem struct {
+	Repo         string             `json:"repo"`
+	LatestTag    string             `json:"latest_tag,omitempty"`
+	TagCount     int                `json:"tag_count"`
+	Size         int64              `json:"size"`
+	Created      string             `json:"created,omitempty"`
+	Platforms    []OverviewPlatform `json:"platforms,omitempty"`
+	PullCount    int64              `json:"pull_count"`
+	LastPulledAt *int64             `json:"last_pulled_at,omitempty"`
+	RefreshedAt  int64              `json:"refreshed_at"`
+}
+
+// OverviewResponse is paginated.
+type OverviewResponse struct {
+	Items    []OverviewItem `json:"items"`
+	Total    int            `json:"total"`
+	Page     int            `json:"page"`
+	PageSize int            `json:"page_size"`
+}
+
+// Overview returns the cached RepoMeta rows that the session user is
+// allowed to see, filtered + sorted + paginated server-side. The
+// catalog page used to fan out one manifest fetch per card — now it
+// makes one call here and the backend reads from repo_meta (kept in
+// sync by webhooks + reconciler). No upstream registry traffic on
+// this path.
+//
+// Query params:
+//   - q          — substring match on repo name (case-insensitive)
+//   - sort       — name | updated | size | tags  (default name)
+//   - direction  — asc | desc  (default depends on sort column)
+//   - page       — 0-based (default 0)
+//   - page_size  — default 50, clamped to [1, 500]
+func (s *RegistryService) Overview(ctx *router.Context) error {
+	user, err := s.currentUser(ctx)
+	if err != nil {
+		return err
+	}
+
+	items, err := s.meta.List(ctx.Context())
+	if err != nil {
+		return response.ErrInternal.WithCause(err)
+	}
+
+	// Per-user pattern filter. Admin bypasses.
+	if user.Role != "admin" {
+		patterns, err := s.listPatterns(ctx, user.ID)
+		if err != nil {
+			return response.ErrInternal.WithCause(err)
+		}
+		items = filterMetaByPatterns(items, patterns)
+	}
+
+	// Search filter.
+	if q := strings.TrimSpace(ctx.Query("q")); q != "" {
+		lower := strings.ToLower(q)
+		filtered := items[:0]
+		for _, m := range items {
+			if strings.Contains(strings.ToLower(m.Repo), lower) {
+				filtered = append(filtered, m)
+			}
+		}
+		items = filtered
+	}
+
+	// Sort.
+	sortField := ctx.Query("sort")
+	if sortField == "" {
+		sortField = "name"
+	}
+	direction := ctx.Query("direction")
+	if direction == "" {
+		if sortField == "name" {
+			direction = "asc"
+		} else {
+			direction = "desc"
+		}
+	}
+	sortMeta(items, sortField, direction)
+
+	total := len(items)
+
+	// Paginate.
+	page := queryIntDefault(ctx, "page", 0)
+	if page < 0 {
+		page = 0
+	}
+	pageSize := queryIntDefault(ctx, "page_size", 50)
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+	if pageSize > 500 {
+		pageSize = 500
+	}
+	start := page * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+
+	out := OverviewResponse{
+		Items:    make([]OverviewItem, 0, end-start),
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}
+	for _, m := range items[start:end] {
+		out.Items = append(out.Items, toOverviewItem(m))
+	}
+	return ctx.Success(out)
+}
+
+func toOverviewItem(m *biz.RepoMeta) OverviewItem {
+	platforms := make([]OverviewPlatform, 0, len(m.Platforms))
+	for _, p := range m.Platforms {
+		platforms = append(platforms, OverviewPlatform{
+			Os:           p.Os,
+			Architecture: p.Architecture,
+			Variant:      p.Variant,
+		})
+	}
+	return OverviewItem{
+		Repo:         m.Repo,
+		LatestTag:    m.LatestTag,
+		TagCount:     m.TagCount,
+		Size:         m.Size,
+		Created:      m.Created,
+		Platforms:    platforms,
+		PullCount:    m.PullCount,
+		LastPulledAt: m.LastPulledAt,
+		RefreshedAt:  m.RefreshedAt,
+	}
+}
+
+// filterMetaByPatterns mirrors filterByPatterns but on *biz.RepoMeta
+// slices. Empty patterns = unrestricted (matches the rule in
+// scope.Match for zero-pattern non-admin users).
+func filterMetaByPatterns(items []*biz.RepoMeta, patterns []string) []*biz.RepoMeta {
+	if len(patterns) == 0 {
+		return items
+	}
+	out := items[:0]
+	for _, m := range items {
+		for _, p := range patterns {
+			if scope.MatchPattern(p, m.Repo) {
+				out = append(out, m)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// sortMeta orders items in place. Ties break on name asc so the result
+// is deterministic across equal-keys reruns.
+func sortMeta(items []*biz.RepoMeta, field, direction string) {
+	less := func(a, b *biz.RepoMeta) bool {
+		switch field {
+		case "updated":
+			// Created is ISO-8601; lexicographic compare is date-order.
+			if a.Created != b.Created {
+				return a.Created < b.Created
+			}
+		case "size":
+			if a.Size != b.Size {
+				return a.Size < b.Size
+			}
+		case "tags":
+			if a.TagCount != b.TagCount {
+				return a.TagCount < b.TagCount
+			}
+		}
+		return a.Repo < b.Repo
+	}
+	sortSlice(items, less, direction == "asc")
+}
+
+// sortSlice is a tiny wrapper to centralize the flip-for-desc logic.
+func sortSlice(items []*biz.RepoMeta, less func(a, b *biz.RepoMeta) bool, asc bool) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if asc {
+			return less(items[i], items[j])
+		}
+		return less(items[j], items[i])
+	})
+}
+
+// queryIntDefault reads an int query param, falling back on parse
+// errors. Separate from ctx.QueryInt (kratoscarf may or may not ship
+// one) so the handler stays self-contained.
+func queryIntDefault(ctx *router.Context, key string, def int) int {
+	raw := ctx.Query(key)
+	if raw == "" {
+		return def
+	}
+	var v int
+	if _, err := fmt.Sscanf(raw, "%d", &v); err != nil {
+		return def
+	}
+	return v
 }
 
 // Tags proxies /v2/<name>/tags/list. User must have pull on <name>.

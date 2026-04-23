@@ -14,6 +14,8 @@ type Tx struct {
 	config
 	// AuditLog is the client for interacting with the AuditLog builders.
 	AuditLog *AuditLogClient
+	// RepoMeta is the client for interacting with the RepoMeta builders.
+	RepoMeta *RepoMetaClient
 	// RepoPermission is the client for interacting with the RepoPermission builders.
 	RepoPermission *RepoPermissionClient
 	// User is the client for interacting with the User builders.
@@ -150,6 +152,7 @@ func (tx *Tx) Client() *Client {
 
 func (tx *Tx) init() {
 	tx.AuditLog = NewAuditLogClient(tx.config)
+	tx.RepoMeta = NewRepoMetaClient(tx.config)
 	tx.RepoPermission = NewRepoPermissionClient(tx.config)
 	tx.User = NewUserClient(tx.config)
 }

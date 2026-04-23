@@ -30,3 +30,13 @@ dockery:
     ttl_hours: 168
     cookie_name: dockery_session
     cookie_secure: false
+  webhook:
+    # Shared bearer secret used to authenticate distribution's
+    # notification callbacks. File is created on first boot if missing
+    # and re-used on every subsequent start.
+    secret_path: /data/config/webhook-secret
+  registry:
+    # Base URL dockery-api hits for its own /v2/ calls (reconciler,
+    # meta refresh, UI proxy). Loopback to supervisord-managed
+    # distribution inside the container.
+    upstream_url: http://127.0.0.1:5001

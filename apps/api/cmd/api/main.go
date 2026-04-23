@@ -40,8 +40,16 @@ func init() {
 // The EnsureAdmin call here is intentional: if the users table is empty
 // and no admin password is available, the process refuses to start.
 // This is the only "side-effectful" provider in the wire graph; any
-// other boot-time work belongs here.
-func newApp(logger log.Logger, hs *http.Server, users *biz.UserUsecase, dockery *conf.Dockery) *kratos.App {
+// other boot-time work belongs here — most notably, kicking off the
+// reconciler so the repo_meta cache is self-healing from the first
+// request onward.
+func newApp(
+	logger log.Logger,
+	hs *http.Server,
+	users *biz.UserUsecase,
+	reconciler *biz.Reconciler,
+	dockery *conf.Dockery,
+) *kratos.App {
 	adminUser := dockery.Admin.Username
 	adminPass := dockery.Admin.Password
 	// env takes precedence over yaml so users can bootstrap without committing secrets.
@@ -61,6 +69,11 @@ func newApp(logger log.Logger, hs *http.Server, users *biz.UserUsecase, dockery 
 		}
 		log.NewHelper(logger).Fatalf("ensure admin: %v", err)
 	}
+
+	// Non-blocking: Start delays the first scan a few seconds so
+	// distribution has a chance to finish startup, then runs on a
+	// 30-min ticker. No effect on HTTP readiness.
+	reconciler.Start()
 
 	return kratos.New(
 		kratos.ID(id),

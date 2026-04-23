@@ -4,6 +4,7 @@ package ent
 
 import (
 	"api/internal/data/ent/auditlog"
+	"api/internal/data/ent/repometa"
 	"api/internal/data/ent/repopermission"
 	"api/internal/data/ent/user"
 	"context"
@@ -76,6 +77,7 @@ func checkColumn(table, column string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
 			auditlog.Table:       auditlog.ValidColumn,
+			repometa.Table:       repometa.ValidColumn,
 			repopermission.Table: repopermission.ValidColumn,
 			user.Table:           user.ValidColumn,
 		})

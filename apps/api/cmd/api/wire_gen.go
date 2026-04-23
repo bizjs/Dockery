@@ -52,11 +52,21 @@ func wireApp(confServer *conf.Server, confData *conf.Data, dockery *conf.Dockery
 		return nil, nil, err
 	}
 	maintenance := biz.NewMaintenance()
-	registryService := service.NewRegistryService(userUsecase, permissionUsecase, tokenIssuer, auditUsecase, maintenance)
+	repoMetaRepo := data.NewRepoMetaRepo(dataData, logger)
+	registryUpstreamURL := biz.NewRegistryUpstreamURL(dockery)
+	repoMetaUsecase := biz.NewRepoMetaUsecase(repoMetaRepo, tokenIssuer, registryUpstreamURL, logger)
+	registryService := service.NewRegistryService(userUsecase, permissionUsecase, tokenIssuer, auditUsecase, maintenance, repoMetaUsecase, registryUpstreamURL)
 	tokenService := service.NewTokenService(userUsecase, permissionUsecase, tokenIssuer, auditUsecase)
 	gcConfig := biz.NewGCConfigFromConf(dockery)
 	gcRunner := biz.NewGCRunner(gcConfig, maintenance, auditUsecase, logger)
 	adminService := service.NewAdminService(auditUsecase, gcRunner)
+	webhookSecretConfig := biz.NewWebhookSecretConfigFromConf(dockery)
+	webhookSecret, err := biz.NewWebhookSecret(webhookSecretConfig)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	webhookService := service.NewWebhookService(webhookSecret, repoMetaUsecase)
 	services := &service.Services{
 		System:     systemService,
 		Auth:       authService,
@@ -65,12 +75,14 @@ func wireApp(confServer *conf.Server, confData *conf.Data, dockery *conf.Dockery
 		Registry:   registryService,
 		Token:      tokenService,
 		Admin:      adminService,
+		Webhook:    webhookService,
 	}
 	memoryStore := session.NewMemoryStore()
 	config := biz.NewSessionConfigFromConf(dockery)
 	manager := biz.NewSessionManager(memoryStore, config)
 	httpServer := server.NewHTTPServer(confServer, services, manager, logger)
-	app := newApp(logger, httpServer, userUsecase, dockery)
+	reconciler := biz.NewReconciler(repoMetaUsecase, tokenIssuer, auditUsecase, registryUpstreamURL, logger)
+	app := newApp(logger, httpServer, userUsecase, reconciler, dockery)
 	return app, func() {
 		cleanup()
 	}, nil

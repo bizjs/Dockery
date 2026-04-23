@@ -26,4 +26,9 @@ var ProviderSet = wire.NewSet(
 	NewMaintenance,
 	NewGCConfigFromConf,
 	NewGCRunner,
+	NewWebhookSecretConfigFromConf,
+	NewWebhookSecret,
+	NewRegistryUpstreamURL,
+	NewRepoMetaUsecase,
+	NewReconciler,
 )

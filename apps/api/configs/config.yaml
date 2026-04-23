@@ -31,3 +31,12 @@ dockery:
     ttl_hours: 168
     cookie_name: dockery_session
     cookie_secure: false     # set true behind HTTPS in production
+  webhook:
+    # Shared bearer secret for distribution's notification callbacks.
+    # Auto-generated on first boot if missing.
+    secret_path: ./data/webhook-secret
+  registry:
+    # Where dockery-api sends its own /v2/ calls. For `make run`
+    # there's no local distribution; point this at a real registry
+    # when you want to exercise the webhook + reconcile path locally.
+    upstream_url: http://127.0.0.1:5001

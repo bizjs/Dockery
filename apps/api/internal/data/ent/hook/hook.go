@@ -20,6 +20,18 @@ func (f AuditLogFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, er
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AuditLogMutation", m)
 }
 
+// The RepoMetaFunc type is an adapter to allow the use of ordinary
+// function as RepoMeta mutator.
+type RepoMetaFunc func(context.Context, *ent.RepoMetaMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f RepoMetaFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.RepoMetaMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.RepoMetaMutation", m)
+}
+
 // The RepoPermissionFunc type is an adapter to allow the use of ordinary
 // function as RepoPermission mutator.
 type RepoPermissionFunc func(context.Context, *ent.RepoPermissionMutation) (ent.Value, error)

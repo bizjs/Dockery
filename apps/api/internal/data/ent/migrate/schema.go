@@ -43,6 +43,32 @@ var (
 			},
 		},
 	}
+	// RepoMetaColumns holds the columns for the "repo_meta" table.
+	RepoMetaColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "repo", Type: field.TypeString, Unique: true},
+		{Name: "latest_tag", Type: field.TypeString, Nullable: true},
+		{Name: "tag_count", Type: field.TypeInt, Default: 0},
+		{Name: "size", Type: field.TypeInt64, Default: 0},
+		{Name: "created", Type: field.TypeString, Nullable: true},
+		{Name: "platforms", Type: field.TypeJSON, Nullable: true},
+		{Name: "pull_count", Type: field.TypeInt64, Default: 0},
+		{Name: "last_pulled_at", Type: field.TypeTime, Nullable: true},
+		{Name: "refreshed_at", Type: field.TypeTime},
+	}
+	// RepoMetaTable holds the schema information for the "repo_meta" table.
+	RepoMetaTable = &schema.Table{
+		Name:       "repo_meta",
+		Columns:    RepoMetaColumns,
+		PrimaryKey: []*schema.Column{RepoMetaColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "repometa_repo",
+				Unique:  true,
+				Columns: []*schema.Column{RepoMetaColumns[1]},
+			},
+		},
+	}
 	// RepoPermissionsColumns holds the columns for the "repo_permissions" table.
 	RepoPermissionsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
@@ -97,6 +123,7 @@ var (
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
 		AuditLogsTable,
+		RepoMetaTable,
 		RepoPermissionsTable,
 		UsersTable,
 	}

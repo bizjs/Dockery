@@ -4,6 +4,7 @@ package ent
 
 import (
 	"api/internal/data/ent/auditlog"
+	"api/internal/data/ent/repometa"
 	"api/internal/data/ent/repopermission"
 	"api/internal/data/ent/schema"
 	"api/internal/data/ent/user"
@@ -32,6 +33,30 @@ func init() {
 	auditlogDescSuccess := auditlogFields[6].Descriptor()
 	// auditlog.DefaultSuccess holds the default value on creation for the success field.
 	auditlog.DefaultSuccess = auditlogDescSuccess.Default.(bool)
+	repometaFields := schema.RepoMeta{}.Fields()
+	_ = repometaFields
+	// repometaDescRepo is the schema descriptor for repo field.
+	repometaDescRepo := repometaFields[0].Descriptor()
+	// repometa.RepoValidator is a validator for the "repo" field. It is called by the builders before save.
+	repometa.RepoValidator = repometaDescRepo.Validators[0].(func(string) error)
+	// repometaDescTagCount is the schema descriptor for tag_count field.
+	repometaDescTagCount := repometaFields[2].Descriptor()
+	// repometa.DefaultTagCount holds the default value on creation for the tag_count field.
+	repometa.DefaultTagCount = repometaDescTagCount.Default.(int)
+	// repometaDescSize is the schema descriptor for size field.
+	repometaDescSize := repometaFields[3].Descriptor()
+	// repometa.DefaultSize holds the default value on creation for the size field.
+	repometa.DefaultSize = repometaDescSize.Default.(int64)
+	// repometaDescPullCount is the schema descriptor for pull_count field.
+	repometaDescPullCount := repometaFields[6].Descriptor()
+	// repometa.DefaultPullCount holds the default value on creation for the pull_count field.
+	repometa.DefaultPullCount = repometaDescPullCount.Default.(int64)
+	// repometaDescRefreshedAt is the schema descriptor for refreshed_at field.
+	repometaDescRefreshedAt := repometaFields[8].Descriptor()
+	// repometa.DefaultRefreshedAt holds the default value on creation for the refreshed_at field.
+	repometa.DefaultRefreshedAt = repometaDescRefreshedAt.Default.(func() time.Time)
+	// repometa.UpdateDefaultRefreshedAt holds the default value on update for the refreshed_at field.
+	repometa.UpdateDefaultRefreshedAt = repometaDescRefreshedAt.UpdateDefault.(func() time.Time)
 	repopermissionFields := schema.RepoPermission{}.Fields()
 	_ = repopermissionFields
 	// repopermissionDescRepoPattern is the schema descriptor for repo_pattern field.

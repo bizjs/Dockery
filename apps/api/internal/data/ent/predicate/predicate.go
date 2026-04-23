@@ -9,6 +9,9 @@ import (
 // AuditLog is the predicate function for auditlog builders.
 type AuditLog func(*sql.Selector)
 
+// RepoMeta is the predicate function for repometa builders.
+type RepoMeta func(*sql.Selector)
+
 // RepoPermission is the predicate function for repopermission builders.
 type RepoPermission func(*sql.Selector)
 

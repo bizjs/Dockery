@@ -76,6 +76,7 @@ func newHarness(t *testing.T) *harness {
 	userRepo := data.NewUserRepo(d, logger)
 	permRepo := data.NewPermissionRepo(d, logger)
 	auditRepo := data.NewAuditRepo(d, logger)
+	repoMetaRepo := data.NewRepoMetaRepo(d, logger)
 	userUC := biz.NewUserUsecase(userRepo)
 	permUC := biz.NewPermissionUsecase(permRepo, userRepo)
 	auditUC := biz.NewAuditUsecase(auditRepo, logger)
@@ -83,15 +84,26 @@ func newHarness(t *testing.T) *harness {
 	// Use a no-op GC runner in tests — the endpoint isn't exercised here
 	// and we don't want to actually shell out to supervisorctl.
 	gcRunner := biz.NewGCRunner(biz.GCConfig{}, maint, auditUC, logger)
+	// Fake upstream URL — the cache-backed Overview handler doesn't dial
+	// anything, and the reconciler / webhook path is not exercised here.
+	metaUC := biz.NewRepoMetaUsecase(repoMetaRepo, iss, biz.RegistryUpstreamURL("http://127.0.0.1:1"), logger)
+	t.Cleanup(metaUC.Close)
+	whSecret, err := biz.NewWebhookSecret(biz.WebhookSecretConfig{
+		Path: filepath.Join(keyDir, "webhook-secret"),
+	})
+	if err != nil {
+		t.Fatalf("webhook secret: %v", err)
+	}
 
 	svcs := &service.Services{
 		System:     service.NewSystemService(),
 		Auth:       service.NewAuthService(userUC, auditUC),
 		User:       service.NewUserService(userUC, permUC, auditUC),
 		Permission: service.NewPermissionService(permUC, userUC, auditUC),
-		Registry:   service.NewRegistryService(userUC, permUC, iss, auditUC, maint),
+		Registry:   service.NewRegistryService(userUC, permUC, iss, auditUC, maint, metaUC, biz.RegistryUpstreamURL("http://127.0.0.1:1")),
 		Token:      service.NewTokenService(userUC, permUC, iss, auditUC),
 		Admin:      service.NewAdminService(auditUC, gcRunner),
+		Webhook:    service.NewWebhookService(whSecret, metaUC),
 	}
 
 	// We still build a kratos http.Server for its option chain

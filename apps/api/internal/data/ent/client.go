@@ -12,6 +12,7 @@ import (
 	"api/internal/data/ent/migrate"
 
 	"api/internal/data/ent/auditlog"
+	"api/internal/data/ent/repometa"
 	"api/internal/data/ent/repopermission"
 	"api/internal/data/ent/user"
 
@@ -28,6 +29,8 @@ type Client struct {
 	Schema *migrate.Schema
 	// AuditLog is the client for interacting with the AuditLog builders.
 	AuditLog *AuditLogClient
+	// RepoMeta is the client for interacting with the RepoMeta builders.
+	RepoMeta *RepoMetaClient
 	// RepoPermission is the client for interacting with the RepoPermission builders.
 	RepoPermission *RepoPermissionClient
 	// User is the client for interacting with the User builders.
@@ -44,6 +47,7 @@ func NewClient(opts ...Option) *Client {
 func (c *Client) init() {
 	c.Schema = migrate.NewSchema(c.driver)
 	c.AuditLog = NewAuditLogClient(c.config)
+	c.RepoMeta = NewRepoMetaClient(c.config)
 	c.RepoPermission = NewRepoPermissionClient(c.config)
 	c.User = NewUserClient(c.config)
 }
@@ -139,6 +143,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		ctx:            ctx,
 		config:         cfg,
 		AuditLog:       NewAuditLogClient(cfg),
+		RepoMeta:       NewRepoMetaClient(cfg),
 		RepoPermission: NewRepoPermissionClient(cfg),
 		User:           NewUserClient(cfg),
 	}, nil
@@ -161,6 +166,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		ctx:            ctx,
 		config:         cfg,
 		AuditLog:       NewAuditLogClient(cfg),
+		RepoMeta:       NewRepoMetaClient(cfg),
 		RepoPermission: NewRepoPermissionClient(cfg),
 		User:           NewUserClient(cfg),
 	}, nil
@@ -192,6 +198,7 @@ func (c *Client) Close() error {
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
 	c.AuditLog.Use(hooks...)
+	c.RepoMeta.Use(hooks...)
 	c.RepoPermission.Use(hooks...)
 	c.User.Use(hooks...)
 }
@@ -200,6 +207,7 @@ func (c *Client) Use(hooks ...Hook) {
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	c.AuditLog.Intercept(interceptors...)
+	c.RepoMeta.Intercept(interceptors...)
 	c.RepoPermission.Intercept(interceptors...)
 	c.User.Intercept(interceptors...)
 }
@@ -209,6 +217,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 	switch m := m.(type) {
 	case *AuditLogMutation:
 		return c.AuditLog.mutate(ctx, m)
+	case *RepoMetaMutation:
+		return c.RepoMeta.mutate(ctx, m)
 	case *RepoPermissionMutation:
 		return c.RepoPermission.mutate(ctx, m)
 	case *UserMutation:
@@ -348,6 +358,139 @@ func (c *AuditLogClient) mutate(ctx context.Context, m *AuditLogMutation) (Value
 		return (&AuditLogDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown AuditLog mutation op: %q", m.Op())
+	}
+}
+
+// RepoMetaClient is a client for the RepoMeta schema.
+type RepoMetaClient struct {
+	config
+}
+
+// NewRepoMetaClient returns a client for the RepoMeta from the given config.
+func NewRepoMetaClient(c config) *RepoMetaClient {
+	return &RepoMetaClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `repometa.Hooks(f(g(h())))`.
+func (c *RepoMetaClient) Use(hooks ...Hook) {
+	c.hooks.RepoMeta = append(c.hooks.RepoMeta, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `repometa.Intercept(f(g(h())))`.
+func (c *RepoMetaClient) Intercept(interceptors ...Interceptor) {
+	c.inters.RepoMeta = append(c.inters.RepoMeta, interceptors...)
+}
+
+// Create returns a builder for creating a RepoMeta entity.
+func (c *RepoMetaClient) Create() *RepoMetaCreate {
+	mutation := newRepoMetaMutation(c.config, OpCreate)
+	return &RepoMetaCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of RepoMeta entities.
+func (c *RepoMetaClient) CreateBulk(builders ...*RepoMetaCreate) *RepoMetaCreateBulk {
+	return &RepoMetaCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *RepoMetaClient) MapCreateBulk(slice any, setFunc func(*RepoMetaCreate, int)) *RepoMetaCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &RepoMetaCreateBulk{err: fmt.Errorf("calling to RepoMetaClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*RepoMetaCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &RepoMetaCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for RepoMeta.
+func (c *RepoMetaClient) Update() *RepoMetaUpdate {
+	mutation := newRepoMetaMutation(c.config, OpUpdate)
+	return &RepoMetaUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *RepoMetaClient) UpdateOne(rm *RepoMeta) *RepoMetaUpdateOne {
+	mutation := newRepoMetaMutation(c.config, OpUpdateOne, withRepoMeta(rm))
+	return &RepoMetaUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *RepoMetaClient) UpdateOneID(id int) *RepoMetaUpdateOne {
+	mutation := newRepoMetaMutation(c.config, OpUpdateOne, withRepoMetaID(id))
+	return &RepoMetaUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for RepoMeta.
+func (c *RepoMetaClient) Delete() *RepoMetaDelete {
+	mutation := newRepoMetaMutation(c.config, OpDelete)
+	return &RepoMetaDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *RepoMetaClient) DeleteOne(rm *RepoMeta) *RepoMetaDeleteOne {
+	return c.DeleteOneID(rm.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *RepoMetaClient) DeleteOneID(id int) *RepoMetaDeleteOne {
+	builder := c.Delete().Where(repometa.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &RepoMetaDeleteOne{builder}
+}
+
+// Query returns a query builder for RepoMeta.
+func (c *RepoMetaClient) Query() *RepoMetaQuery {
+	return &RepoMetaQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeRepoMeta},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a RepoMeta entity by its id.
+func (c *RepoMetaClient) Get(ctx context.Context, id int) (*RepoMeta, error) {
+	return c.Query().Where(repometa.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *RepoMetaClient) GetX(ctx context.Context, id int) *RepoMeta {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *RepoMetaClient) Hooks() []Hook {
+	return c.hooks.RepoMeta
+}
+
+// Interceptors returns the client interceptors.
+func (c *RepoMetaClient) Interceptors() []Interceptor {
+	return c.inters.RepoMeta
+}
+
+func (c *RepoMetaClient) mutate(ctx context.Context, m *RepoMetaMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&RepoMetaCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&RepoMetaUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&RepoMetaUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&RepoMetaDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown RepoMeta mutation op: %q", m.Op())
 	}
 }
 
@@ -652,9 +795,9 @@ func (c *UserClient) mutate(ctx context.Context, m *UserMutation) (Value, error)
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		AuditLog, RepoPermission, User []ent.Hook
+		AuditLog, RepoMeta, RepoPermission, User []ent.Hook
 	}
 	inters struct {
-		AuditLog, RepoPermission, User []ent.Interceptor
+		AuditLog, RepoMeta, RepoPermission, User []ent.Interceptor
 	}
 )

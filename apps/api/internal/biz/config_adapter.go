@@ -18,6 +18,33 @@ func NewKeystoreConfigFromConf(c *conf.Dockery) KeystoreConfig {
 	}
 }
 
+// NewWebhookSecretConfigFromConf maps the yaml webhook section. Falls
+// back to the container-baked default path so operators can leave the
+// section out entirely.
+func NewWebhookSecretConfigFromConf(c *conf.Dockery) WebhookSecretConfig {
+	path := c.Webhook.SecretPath
+	if path == "" {
+		path = "/data/config/webhook-secret"
+	}
+	return WebhookSecretConfig{Path: path}
+}
+
+// RegistryUpstreamURL is the base URL other biz components (reconciler,
+// meta refresher) use for /v2/ calls against the local distribution
+// registry. Defaults to 127.0.0.1:5001 (the in-container nginx-less
+// port); override via `dockery.registry.upstream_url`.
+type RegistryUpstreamURL string
+
+// NewRegistryUpstreamURL resolves the upstream base URL from conf with
+// a sane container default.
+func NewRegistryUpstreamURL(c *conf.Dockery) RegistryUpstreamURL {
+	u := c.Registry.UpstreamURL
+	if u == "" {
+		u = "http://127.0.0.1:5001"
+	}
+	return RegistryUpstreamURL(u)
+}
+
 // NewTokenIssuerConfigFromConf derives a TokenIssuerConfig from the
 // yaml-loaded Dockery section. TTL is stored as seconds in config so
 // yaml stays human-readable; we convert to time.Duration here.
