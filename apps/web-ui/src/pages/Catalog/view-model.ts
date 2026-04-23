@@ -28,10 +28,14 @@ interface ViewState {
   error: string | null;
 }
 
+const SEARCH_DEBOUNCE_MS = 300;
+
 export class CatalogViewModel extends BaseViewModel<ViewState> implements ViewModelLifecycle {
   // Incrementing request token so out-of-order responses (user types
   // fast, older request resolves later) don't clobber newer data.
   private reqSeq = 0;
+  // Pending debounced search fetch, if any — reset on every keystroke.
+  private searchTimer?: ReturnType<typeof setTimeout>;
 
   constructor() {
     super({
@@ -83,10 +87,16 @@ export class CatalogViewModel extends BaseViewModel<ViewState> implements ViewMo
   }
 
   setSearchQuery(query: string) {
-    // Jump back to page 0 on any filter change so users don't land on
-    // page 3 of a narrowed-down result set with nothing showing.
+    // State updates immediately so the input stays responsive; the
+    // actual fetch is debounced to avoid hammering the backend on
+    // every keystroke. Jump back to page 0 on any filter change so
+    // users don't land on page 3 of a narrowed-down result with
+    // nothing showing.
     this.$updateState({ searchQuery: query, page: 0 });
-    void this.fetch();
+    if (this.searchTimer) clearTimeout(this.searchTimer);
+    this.searchTimer = setTimeout(() => {
+      void this.fetch();
+    }, SEARCH_DEBOUNCE_MS);
   }
 
   toggleSort(field: SortField) {
@@ -104,20 +114,34 @@ export class CatalogViewModel extends BaseViewModel<ViewState> implements ViewMo
         page: 0,
       });
     }
+    this.cancelSearchDebounce();
     void this.fetch();
   }
 
   setPage(page: number) {
     this.$updateState({ page: Math.max(0, page) });
+    this.cancelSearchDebounce();
     void this.fetch();
   }
 
   setPageSize(pageSize: number) {
     this.$updateState({ pageSize, page: 0 });
+    this.cancelSearchDebounce();
     void this.fetch();
   }
 
   async refresh() {
+    this.cancelSearchDebounce();
     await this.fetch();
+  }
+
+  /** Cancel any pending debounced search fetch. Called before an
+   * immediate fetch so we don't race a stale debounced request against
+   * the new one. */
+  private cancelSearchDebounce() {
+    if (this.searchTimer) {
+      clearTimeout(this.searchTimer);
+      this.searchTimer = undefined;
+    }
   }
 }

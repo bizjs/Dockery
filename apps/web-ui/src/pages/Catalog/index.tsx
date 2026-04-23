@@ -14,6 +14,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Package,
+  RefreshCw,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -96,24 +97,42 @@ export default function Catalog() {
     </Button>
   );
 
+  // Initial load = spinner owns the table. Refetch = keep old rows
+  // visible with a subtle dim so sort / paging / search don't collapse
+  // the layout between the click and the response.
+  const initialLoading = snapshot.loading && snapshot.items.length === 0;
+  const refetching = snapshot.loading && snapshot.items.length > 0;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold">Images</h2>
-          {!snapshot.loading && (
+          {!initialLoading && (
             <p className="text-sm text-muted-foreground mt-1">
               {snapshot.total}&nbsp;
               {snapshot.total === 1 ? 'image' : 'images'} available
             </p>
           )}
         </div>
-        <div className="w-full max-w-md">
-          <SearchBar
-            value={snapshot.searchQuery}
-            onChange={vm.setSearchQuery}
-            placeholder="Search images..."
-          />
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => vm.refresh()}
+            disabled={snapshot.loading}
+            title="Refresh"
+            aria-label="Refresh"
+          >
+            <RefreshCw className={`h-4 w-4 ${refetching ? 'animate-spin' : ''}`} />
+          </Button>
+          <div className="w-full max-w-md">
+            <SearchBar
+              value={snapshot.searchQuery}
+              onChange={vm.setSearchQuery}
+              placeholder="Search images..."
+            />
+          </div>
         </div>
       </div>
 
@@ -124,7 +143,11 @@ export default function Catalog() {
       )}
 
       {!snapshot.error && (
-        <div className="rounded-md border">
+        <div
+          className={`rounded-md border transition-opacity ${
+            refetching ? 'opacity-60 pointer-events-none' : ''
+          }`}
+        >
           <Table>
             <TableHeader>
               <TableRow>
@@ -145,14 +168,14 @@ export default function Catalog() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {snapshot.loading && (
+              {initialLoading && (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                     Loading…
                   </TableCell>
                 </TableRow>
               )}
-              {!snapshot.loading && snapshot.items.length === 0 && (
+              {!initialLoading && snapshot.items.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                     {snapshot.searchQuery
@@ -161,8 +184,7 @@ export default function Catalog() {
                   </TableCell>
                 </TableRow>
               )}
-              {!snapshot.loading &&
-                snapshot.items.map((r) => {
+              {snapshot.items.map((r) => {
                   const arch =
                     r.platforms && r.platforms.length > 1
                       ? archLabel(r as OverviewItem)
@@ -213,8 +235,12 @@ export default function Catalog() {
         </div>
       )}
 
-      {!snapshot.loading && !snapshot.error && snapshot.total > 0 && (
-        <div className="flex items-center justify-between text-sm">
+      {!snapshot.error && snapshot.total > 0 && (
+        <div
+          className={`flex items-center justify-between text-sm transition-opacity ${
+            refetching ? 'opacity-60 pointer-events-none' : ''
+          }`}
+        >
           <div className="text-muted-foreground">
             Showing{' '}
             <span className="font-medium text-foreground">
