@@ -2,6 +2,17 @@
 
 本文件记录 Dockery 的所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.0] - 2026-04-23
+
+### 修复
+
+- OTEL_SDK_DISABLED not set
+
+### 新增
+
+- update UI
+
+
 ## [0.4.0] - 2026-04-22
 
 ### 文档
