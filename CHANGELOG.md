@@ -2,6 +2,17 @@
 
 本文件记录 Dockery 的所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.7.0] - 2026-04-23
+
+### 修复
+
+- use biz-utils copyText for HTTP-localhost clipboard fallback
+
+### 变更
+
+- extract catalog fetch into registryfetch.Client
+
+
 ## [0.6.0] - 2026-04-23
 
 ### 变更
