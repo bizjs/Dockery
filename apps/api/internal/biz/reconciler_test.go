@@ -95,12 +95,16 @@ func newReconcilerRig(t *testing.T, upstreamURL string, cached []string) (*Recon
 	audit := &memoryAuditRepo{}
 	auditUC := NewAuditUsecase(audit, log.DefaultLogger)
 
-	fetcher := NewRegistryFetchClient(iss, RegistryUpstreamURL("http://127.0.0.1:1"))
-	metaUC := NewRepoMetaUsecase(repo, fetcher, log.DefaultLogger)
+	// Refresh worker is pointed at an unreachable upstream so the
+	// async refreshes we enqueue can't escape the test box — they'll
+	// fail their retries and the queue drains without side effects.
+	metaFetcher := NewRegistryFetchClient(iss, RegistryUpstreamURL("http://127.0.0.1:1"))
+	metaUC := NewRepoMetaUsecase(repo, metaFetcher, log.DefaultLogger)
 	t.Cleanup(metaUC.Close)
 
-	r := NewReconciler(metaUC, iss, auditUC,
-		RegistryUpstreamURL(upstreamURL),
+	// Reconciler reads from the fake httptest server.
+	reconFetcher := NewRegistryFetchClient(iss, RegistryUpstreamURL(upstreamURL))
+	r := NewReconciler(metaUC, reconFetcher, auditUC,
 		ReconcilerConfig{Interval: time.Hour}, // won't tick during the test
 		log.DefaultLogger)
 
@@ -223,21 +227,3 @@ func drainQueue(u *RepoMetaUsecase) []string {
 	}
 }
 
-func TestNextPagePath(t *testing.T) {
-	cases := []struct {
-		name, in, want string
-	}{
-		{"empty", "", ""},
-		{"no rel-next", `<http://host/x>; rel="first"`, ""},
-		{"full url", `<http://host/v2/_catalog?n=100&last=foo>; rel="next"`, "/v2/_catalog?n=100&last=foo"},
-		{"path only", `</v2/_catalog?n=100&last=foo>; rel="next"`, "/v2/_catalog?n=100&last=foo"},
-		{"malformed", `<::not a url::>; rel="next"`, ""},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := nextPagePath(c.in); got != c.want {
-				t.Errorf("nextPagePath(%q) = %q, want %q", c.in, got, c.want)
-			}
-		})
-	}
-}

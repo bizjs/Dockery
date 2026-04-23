@@ -116,6 +116,64 @@ func (r *repoMetaRepo) AllRepos(ctx context.Context) ([]string, error) {
 		Strings(ctx)
 }
 
+// QueryPage is the DB-backed read path for the Overview endpoint. All
+// filtering, sorting, and pagination happen at the SQL layer so memory
+// stays bounded no matter how many repos the cache holds.
+func (r *repoMetaRepo) QueryPage(ctx context.Context, f biz.OverviewFilter) (*biz.OverviewPage, error) {
+	base := r.data.DB().RepoMeta.Query()
+	if f.Query != "" {
+		base = base.Where(repometa.RepoContainsFold(f.Query))
+	}
+	// Count is cheap over the indexed WHERE; do it before adding the
+	// sort / limit so it reflects the filtered universe, not the page.
+	total, err := base.Clone().Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("repo_meta count: %w", err)
+	}
+
+	sortField := sortFieldFor(f.Sort)
+	if f.Direction == biz.OverviewDesc {
+		base = base.Order(ent.Desc(sortField))
+	} else {
+		base = base.Order(ent.Asc(sortField))
+	}
+	// Secondary sort by repo for stability — equal keys (e.g. two
+	// repos with the same tag_count) keep the same relative order
+	// across reruns, which matters for pagination UX.
+	if sortField != repometa.FieldRepo {
+		base = base.Order(ent.Asc(repometa.FieldRepo))
+	}
+
+	rows, err := base.
+		Offset(f.Page * f.PageSize).
+		Limit(f.PageSize).
+		All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("repo_meta query: %w", err)
+	}
+	items := make([]*biz.RepoMeta, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, toBizRepoMeta(row))
+	}
+	return &biz.OverviewPage{Items: items, Total: total}, nil
+}
+
+// sortFieldFor maps the biz sort enum to the ent field name. Keep the
+// default-to-name behaviour for unknown values so a typo in the DTO
+// can't crash the query.
+func sortFieldFor(s biz.OverviewSort) string {
+	switch s {
+	case biz.OverviewSortSize:
+		return repometa.FieldSize
+	case biz.OverviewSortUpdated:
+		return repometa.FieldCreated
+	case biz.OverviewSortTagCount:
+		return repometa.FieldTagCount
+	default:
+		return repometa.FieldRepo
+	}
+}
+
 // IncrementPull atomically bumps pull_count and sets last_pulled_at.
 // Uses ent's AddPullCount so concurrent pulls don't clobber each other.
 // Returns the number of rows affected — 0 means the repo isn't in the

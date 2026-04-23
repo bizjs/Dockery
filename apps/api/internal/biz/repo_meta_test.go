@@ -80,6 +80,19 @@ func (f *fakeRepoMetaRepo) AllRepos(_ context.Context) ([]string, error) {
 	return out, nil
 }
 
+func (f *fakeRepoMetaRepo) QueryPage(_ context.Context, filter OverviewFilter) (*OverviewPage, error) {
+	// Only need enough to keep callers that happen to use this method
+	// working in tests — current biz_test callers don't exercise this
+	// path, so a minimal List-and-paginate is fine.
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	all := make([]*RepoMeta, 0, len(f.rows))
+	for _, m := range f.rows {
+		all = append(all, m)
+	}
+	return &OverviewPage{Items: all, Total: len(all)}, nil
+}
+
 func (f *fakeRepoMetaRepo) IncrementPull(_ context.Context, repo string, at time.Time) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

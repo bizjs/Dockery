@@ -83,7 +83,7 @@ func wireApp(confServer *conf.Server, confData *conf.Data, dockery *conf.Dockery
 	manager := biz.NewSessionManager(memoryStore, config)
 	httpServer := server.NewHTTPServer(confServer, services, manager, logger)
 	reconcilerConfig := biz.NewReconcilerConfigFromConf(dockery)
-	reconciler := biz.NewReconciler(repoMetaUsecase, tokenIssuer, auditUsecase, registryUpstreamURL, reconcilerConfig, logger)
+	reconciler := biz.NewReconciler(repoMetaUsecase, client, auditUsecase, reconcilerConfig, logger)
 	app := newApp(logger, httpServer, userUsecase, repoMetaUsecase, reconciler, dockery)
 	return app, func() {
 		cleanup()

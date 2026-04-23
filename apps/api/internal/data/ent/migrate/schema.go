@@ -67,6 +67,26 @@ var (
 				Unique:  true,
 				Columns: []*schema.Column{RepoMetaColumns[1]},
 			},
+			{
+				Name:    "repometa_size",
+				Unique:  false,
+				Columns: []*schema.Column{RepoMetaColumns[4]},
+			},
+			{
+				Name:    "repometa_created",
+				Unique:  false,
+				Columns: []*schema.Column{RepoMetaColumns[5]},
+			},
+			{
+				Name:    "repometa_tag_count",
+				Unique:  false,
+				Columns: []*schema.Column{RepoMetaColumns[3]},
+			},
+			{
+				Name:    "repometa_refreshed_at",
+				Unique:  false,
+				Columns: []*schema.Column{RepoMetaColumns[9]},
+			},
 		},
 	}
 	// RepoPermissionsColumns holds the columns for the "repo_permissions" table.
