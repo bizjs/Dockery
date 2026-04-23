@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { formatBinarySize } from '@/utils';
+import { formatBinarySize, formatDateTime } from '@/utils';
 import { compactArchLabel } from './platforms';
 import { toast } from 'sonner';
 import { currentUserViewModel } from '@/hooks/use-current-user';
@@ -168,18 +168,8 @@ export default function TagList() {
                 <td className="px-4 py-3 text-muted-foreground w-32">
                   {formatBinarySize(tagInfo.size)}
                 </td>
-                <td className="px-4 py-3 text-muted-foreground w-[200px] min-w-[200px]">
-                  {tagInfo.created
-                    ? new Date(tagInfo.created).toLocaleString(undefined, {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit',
-                        hour12: false,
-                      })
-                    : '-'}
+                <td className="px-4 py-3 text-muted-foreground w-[200px] min-w-[200px] tabular-nums">
+                  {formatDateTime(tagInfo.created)}
                 </td>
                 <td className="px-4 py-3 text-muted-foreground font-mono text-xs">
                   <div className="truncate">{tagInfo.digest ? tagInfo.digest : '-'}</div>

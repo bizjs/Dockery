@@ -1,26 +1,37 @@
 /**
- * Catalog Page — dense table view. Repos load first; per-row meta
- * (size / updated / arch) streams in behind via parallel manifest
- * fetches so rows don't block on the slowest repo. Clicking a row
- * navigates to that repo's tag list. Sort is driven by clicking
- * column headers (same pattern as TagTable).
+ * Catalog Page — dense table view backed by /api/registry/overview.
+ * The server-side repo_meta cache is kept in sync by distribution
+ * webhooks + a periodic reconciler, so every interaction (sort,
+ * search, pagination) is a single HTTP call with fully-populated rows.
  */
 
-import { useMemo } from 'react';
-import { ArrowDown, ArrowUp, ArrowUpDown, Package } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Package,
+  RefreshCw,
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { useViewModel } from '@/lib/viewmodel';
-import {
-  CatalogViewModel,
-  filterAndSort,
-  type SortField,
-} from './view-model';
+import { CatalogViewModel, type SortField } from './view-model';
 import { SearchBar } from '@/components/common/SearchBar';
-import { formatBinarySize } from '@/utils';
+import { formatBinarySize, formatDateTime } from '@/utils';
 import { compactArchLabel, formatPlatform } from '../TagList/platforms';
-import type { ImageInfo } from '@/services/registry.service';
+import type { OverviewItem, OverviewPlatform } from '@/services/registry.service';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -30,30 +41,24 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
-const DATE_FORMAT: Intl.DateTimeFormatOptions = {
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hour12: false,
-};
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 
-/** Tiny inline skeleton — avoids pulling in the shadcn Skeleton component. */
-function SkeletonBar({ className }: { className?: string }) {
-  return <div className={`h-3 animate-pulse rounded bg-muted ${className ?? ''}`} />;
-}
-
-function archLabel(meta: ImageInfo): { label: string; title: string } {
-  if (meta.platforms && meta.platforms.length > 0) {
-    return compactArchLabel(meta.platforms);
-  }
-  if (meta.os || meta.architecture) {
-    const s = formatPlatform({ os: meta.os, architecture: meta.architecture });
-    return { label: s, title: s };
+function archLabel(item: OverviewItem): { label: string; title: string } {
+  const platforms = item.platforms ?? [];
+  if (platforms.length > 0) {
+    // compactArchLabel already filters platform.os === 'unknown' (BuildKit
+    // attestations), so we can pass the raw list through.
+    return compactArchLabel(platforms);
   }
   return { label: '-', title: '' };
+}
+
+function singlePlatformLabel(p: OverviewPlatform): string {
+  return formatPlatform({
+    os: p.os,
+    architecture: p.architecture,
+    variant: p.variant,
+  });
 }
 
 export default function Catalog() {
@@ -61,18 +66,8 @@ export default function Catalog() {
   const snapshot = vm.$useSnapshot();
   const navigate = useNavigate();
 
-  // Valtio class getters don't subscribe through $useSnapshot, so
-  // filter + sort runs as a pure derivation in the component.
-  const displayed = useMemo(
-    () =>
-      filterAndSort(
-        snapshot.repositories,
-        snapshot.searchQuery,
-        snapshot.sort,
-        snapshot.sortDirection,
-      ),
-    [snapshot.repositories, snapshot.searchQuery, snapshot.sort, snapshot.sortDirection],
-  );
+  const pageCount = Math.max(1, Math.ceil(snapshot.total / snapshot.pageSize));
+  const currentPage = Math.min(snapshot.page, pageCount - 1);
 
   const sortIcon = (field: SortField) => {
     if (snapshot.sort !== field) return <ArrowUpDown className="ml-2 h-4 w-4" />;
@@ -102,24 +97,42 @@ export default function Catalog() {
     </Button>
   );
 
+  // Initial load = spinner owns the table. Refetch = keep old rows
+  // visible with a subtle dim so sort / paging / search don't collapse
+  // the layout between the click and the response.
+  const initialLoading = snapshot.loading && snapshot.items.length === 0;
+  const refetching = snapshot.loading && snapshot.items.length > 0;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold">Images</h2>
-          {!snapshot.loading && (
+          {!initialLoading && (
             <p className="text-sm text-muted-foreground mt-1">
-              {displayed.length}&nbsp;
-              {displayed.length === 1 ? 'image' : 'images'} available
+              {snapshot.total}&nbsp;
+              {snapshot.total === 1 ? 'image' : 'images'} available
             </p>
           )}
         </div>
-        <div className="w-full max-w-md">
-          <SearchBar
-            value={snapshot.searchQuery}
-            onChange={vm.setSearchQuery}
-            placeholder="Search images..."
-          />
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => vm.refresh()}
+            disabled={snapshot.loading}
+            title="Refresh"
+            aria-label="Refresh"
+          >
+            <RefreshCw className={`h-4 w-4 ${refetching ? 'animate-spin' : ''}`} />
+          </Button>
+          <div className="w-full max-w-md">
+            <SearchBar
+              value={snapshot.searchQuery}
+              onChange={vm.setSearchQuery}
+              placeholder="Search images..."
+            />
+          </div>
         </div>
       </div>
 
@@ -130,7 +143,11 @@ export default function Catalog() {
       )}
 
       {!snapshot.error && (
-        <div className="rounded-md border">
+        <div
+          className={`rounded-md border transition-opacity ${
+            refetching ? 'opacity-60 pointer-events-none' : ''
+          }`}
+        >
           <Table>
             <TableHeader>
               <TableRow>
@@ -151,14 +168,14 @@ export default function Catalog() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {snapshot.loading && (
+              {initialLoading && (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                     Loading…
                   </TableCell>
                 </TableRow>
               )}
-              {!snapshot.loading && displayed.length === 0 && (
+              {!initialLoading && snapshot.items.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                     {snapshot.searchQuery
@@ -167,10 +184,16 @@ export default function Catalog() {
                   </TableCell>
                 </TableRow>
               )}
-              {!snapshot.loading &&
-                displayed.map((r) => {
-                  const meta = r.meta;
-                  const arch = meta ? archLabel(meta) : null;
+              {snapshot.items.map((r) => {
+                  const arch =
+                    r.platforms && r.platforms.length > 1
+                      ? archLabel(r as OverviewItem)
+                      : r.platforms && r.platforms.length === 1
+                        ? {
+                            label: singlePlatformLabel(r.platforms[0]),
+                            title: singlePlatformLabel(r.platforms[0]),
+                          }
+                        : { label: '-', title: '' };
                   return (
                     <TableRow
                       key={r.repo}
@@ -185,46 +208,113 @@ export default function Catalog() {
                       </TableCell>
                       <TableCell
                         className="px-4 font-mono text-sm text-muted-foreground truncate"
-                        title={r.latestTag}
+                        title={r.latest_tag}
                       >
-                        {r.latestTag ?? '-'}
+                        {r.latest_tag ?? '-'}
                       </TableCell>
                       <TableCell className="px-4 text-right text-sm text-muted-foreground tabular-nums">
-                        {r.tags.length}
+                        {r.tag_count}
                       </TableCell>
                       <TableCell className="px-4 text-right text-sm text-muted-foreground tabular-nums">
-                        {meta === undefined ? (
-                          <SkeletonBar className="w-16 ml-auto" />
-                        ) : meta ? (
-                          formatBinarySize(meta.size)
-                        ) : (
-                          '-'
-                        )}
+                        {formatBinarySize(r.size)}
                       </TableCell>
                       <TableCell className="px-4 text-sm text-muted-foreground tabular-nums">
-                        {meta === undefined ? (
-                          <SkeletonBar className="w-32" />
-                        ) : meta?.created ? (
-                          new Date(meta.created).toLocaleString(undefined, DATE_FORMAT)
-                        ) : (
-                          '-'
-                        )}
+                        {formatDateTime(r.created)}
                       </TableCell>
                       <TableCell
                         className="px-4 text-sm text-muted-foreground font-mono"
-                        title={arch?.title}
+                        title={arch.title}
                       >
-                        {meta === undefined ? (
-                          <SkeletonBar className="w-28" />
-                        ) : (
-                          arch?.label ?? '-'
-                        )}
+                        {arch.label}
                       </TableCell>
                     </TableRow>
                   );
                 })}
             </TableBody>
           </Table>
+        </div>
+      )}
+
+      {!snapshot.error && snapshot.total > 0 && (
+        <div
+          className={`flex items-center justify-between text-sm transition-opacity ${
+            refetching ? 'opacity-60 pointer-events-none' : ''
+          }`}
+        >
+          <div className="text-muted-foreground">
+            Showing{' '}
+            <span className="font-medium text-foreground">
+              {currentPage * snapshot.pageSize + 1}–
+              {Math.min((currentPage + 1) * snapshot.pageSize, snapshot.total)}
+            </span>{' '}
+            of <span className="font-medium text-foreground">{snapshot.total}</span>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Rows per page</span>
+              <Select
+                value={String(snapshot.pageSize)}
+                onValueChange={(v) => vm.setPageSize(Number(v))}
+              >
+                <SelectTrigger className="h-8 w-20">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAGE_SIZE_OPTIONS.map((n) => (
+                    <SelectItem key={n} value={String(n)}>
+                      {n}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => vm.setPage(0)}
+                disabled={currentPage === 0}
+                aria-label="First page"
+              >
+                <ChevronsLeft className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => vm.setPage(currentPage - 1)}
+                disabled={currentPage === 0}
+                aria-label="Previous page"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="px-2 text-muted-foreground">
+                Page <span className="font-medium text-foreground">{currentPage + 1}</span> /{' '}
+                {pageCount}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => vm.setPage(currentPage + 1)}
+                disabled={currentPage >= pageCount - 1}
+                aria-label="Next page"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => vm.setPage(pageCount - 1)}
+                disabled={currentPage >= pageCount - 1}
+                aria-label="Last page"
+              >
+                <ChevronsRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

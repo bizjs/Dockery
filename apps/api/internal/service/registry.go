@@ -5,11 +5,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"api/internal/biz"
-	"api/internal/pkg/scope"
+	"api/internal/util/registryfetch"
+	"api/internal/util/scope"
 
 	"github.com/bizjs/kratoscarf/response"
 	"github.com/bizjs/kratoscarf/router"
@@ -35,21 +39,39 @@ type RegistryService struct {
 	tokens      *biz.TokenIssuer
 	audit       *biz.AuditUsecase
 	maintenance *biz.Maintenance
-	upstream    string
-	client      *http.Client
+	meta        *biz.RepoMetaUsecase
+	// fetcher is used only by the UI-proxy enrichment path (manifest
+	// list size/created aggregation). The UI proxy's transparent
+	// passthrough (forward method) mints its own per-request token
+	// because it preserves upstream headers — that's a different shape
+	// from what registryfetch.Client offers.
+	fetcher  *registryfetch.Client
+	upstream string
+	client   *http.Client
 }
 
-// NewRegistryService wires the proxy. Upstream is pinned to the
-// loopback address the supervisord starts registry on; when the
-// container moves to multi-host, this becomes configurable.
-func NewRegistryService(users *biz.UserUsecase, perms *biz.PermissionUsecase, tokens *biz.TokenIssuer, audit *biz.AuditUsecase, maintenance *biz.Maintenance) *RegistryService {
+// NewRegistryService wires the proxy. Upstream comes from conf so dev
+// setups with different ports share the same code path as the bundled
+// container (where supervisord starts registry on 127.0.0.1:5001).
+func NewRegistryService(
+	users *biz.UserUsecase,
+	perms *biz.PermissionUsecase,
+	tokens *biz.TokenIssuer,
+	audit *biz.AuditUsecase,
+	maintenance *biz.Maintenance,
+	meta *biz.RepoMetaUsecase,
+	fetcher *registryfetch.Client,
+	upstream biz.RegistryUpstreamURL,
+) *RegistryService {
 	return &RegistryService{
 		users:       users,
 		perms:       perms,
 		tokens:      tokens,
 		audit:       audit,
 		maintenance: maintenance,
-		upstream:    "http://127.0.0.1:5001",
+		meta:        meta,
+		fetcher:     fetcher,
+		upstream:    string(upstream),
 		client:      &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -109,6 +131,227 @@ func (s *RegistryService) Catalog(ctx *router.Context) error {
 	}
 
 	return ctx.Success(out)
+}
+
+// --- Overview: cache-backed aggregated view for the Catalog UI ---
+
+// OverviewPlatform mirrors schema.PlatformInfo but stays in the service
+// layer so the frontend doesn't reach across packages to type its
+// response. `omitempty` keeps responses compact when a field is empty.
+type OverviewPlatform struct {
+	Os           string `json:"os,omitempty"`
+	Architecture string `json:"architecture,omitempty"`
+	Variant      string `json:"variant,omitempty"`
+}
+
+// OverviewItem is one row in the Catalog table.
+type OverviewItem struct {
+	Repo         string             `json:"repo"`
+	LatestTag    string             `json:"latest_tag,omitempty"`
+	TagCount     int                `json:"tag_count"`
+	Size         int64              `json:"size"`
+	Created      string             `json:"created,omitempty"`
+	Platforms    []OverviewPlatform `json:"platforms,omitempty"`
+	PullCount    int64              `json:"pull_count"`
+	LastPulledAt *int64             `json:"last_pulled_at,omitempty"`
+	RefreshedAt  int64              `json:"refreshed_at"`
+}
+
+// OverviewResponse is paginated.
+type OverviewResponse struct {
+	Items    []OverviewItem `json:"items"`
+	Total    int            `json:"total"`
+	Page     int            `json:"page"`
+	PageSize int            `json:"page_size"`
+}
+
+// Overview returns the cached RepoMeta rows that the session user is
+// allowed to see, filtered + sorted + paginated server-side. The
+// catalog page used to fan out one manifest fetch per card — now it
+// makes one call here and the backend reads from repo_meta (kept in
+// sync by webhooks + reconciler). No upstream registry traffic on
+// this path.
+//
+// Query params:
+//   - q          — substring match on repo name (case-insensitive)
+//   - sort       — name | updated | size | tags  (default name)
+//   - direction  — asc | desc  (default depends on sort column)
+//   - page       — 0-based (default 0)
+//   - page_size  — default 50, clamped to [1, 500]
+func (s *RegistryService) Overview(ctx *router.Context) error {
+	user, err := s.currentUser(ctx)
+	if err != nil {
+		return err
+	}
+
+	items, err := s.meta.List(ctx.Context())
+	if err != nil {
+		return response.ErrInternal.WithCause(err)
+	}
+
+	// Per-user pattern filter. Admin bypasses.
+	if user.Role != "admin" {
+		patterns, err := s.listPatterns(ctx, user.ID)
+		if err != nil {
+			return response.ErrInternal.WithCause(err)
+		}
+		items = filterMetaByPatterns(items, patterns)
+	}
+
+	// Search filter. Allocates a fresh slice rather than `items[:0]`
+	// so the pre-filter slice — still held by any future caller who
+	// might decide to keep the unfiltered list around — isn't silently
+	// mutated. Cost is one per-request allocation of up to N pointers.
+	if q := strings.TrimSpace(ctx.Query("q")); q != "" {
+		lower := strings.ToLower(q)
+		filtered := make([]*biz.RepoMeta, 0, len(items))
+		for _, m := range items {
+			if strings.Contains(strings.ToLower(m.Repo), lower) {
+				filtered = append(filtered, m)
+			}
+		}
+		items = filtered
+	}
+
+	// Sort.
+	sortField := ctx.Query("sort")
+	if sortField == "" {
+		sortField = "name"
+	}
+	direction := ctx.Query("direction")
+	if direction == "" {
+		if sortField == "name" {
+			direction = "asc"
+		} else {
+			direction = "desc"
+		}
+	}
+	sortMeta(items, sortField, direction)
+
+	total := len(items)
+
+	// Paginate.
+	page := queryIntDefault(ctx, "page", 0)
+	if page < 0 {
+		page = 0
+	}
+	pageSize := queryIntDefault(ctx, "page_size", 50)
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+	if pageSize > 500 {
+		pageSize = 500
+	}
+	start := page * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+
+	out := OverviewResponse{
+		Items:    make([]OverviewItem, 0, end-start),
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}
+	for _, m := range items[start:end] {
+		out.Items = append(out.Items, toOverviewItem(m))
+	}
+	return ctx.Success(out)
+}
+
+func toOverviewItem(m *biz.RepoMeta) OverviewItem {
+	platforms := make([]OverviewPlatform, 0, len(m.Platforms))
+	for _, p := range m.Platforms {
+		platforms = append(platforms, OverviewPlatform{
+			Os:           p.Os,
+			Architecture: p.Architecture,
+			Variant:      p.Variant,
+		})
+	}
+	return OverviewItem{
+		Repo:         m.Repo,
+		LatestTag:    m.LatestTag,
+		TagCount:     m.TagCount,
+		Size:         m.Size,
+		Created:      m.Created,
+		Platforms:    platforms,
+		PullCount:    m.PullCount,
+		LastPulledAt: m.LastPulledAt,
+		RefreshedAt:  m.RefreshedAt,
+	}
+}
+
+// filterMetaByPatterns mirrors filterByPatterns but on *biz.RepoMeta
+// slices. Empty patterns = unrestricted (matches the rule in
+// scope.Match for zero-pattern non-admin users). Allocates a new slice
+// to avoid aliasing with the caller's view of `items`.
+func filterMetaByPatterns(items []*biz.RepoMeta, patterns []string) []*biz.RepoMeta {
+	if len(patterns) == 0 {
+		return items
+	}
+	out := make([]*biz.RepoMeta, 0, len(items))
+	for _, m := range items {
+		for _, p := range patterns {
+			if scope.MatchPattern(p, m.Repo) {
+				out = append(out, m)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// sortMeta orders items in place. Ties break on name asc so the result
+// is deterministic across equal-keys reruns.
+func sortMeta(items []*biz.RepoMeta, field, direction string) {
+	less := func(a, b *biz.RepoMeta) bool {
+		switch field {
+		case "updated":
+			// Created is ISO-8601; lexicographic compare is date-order.
+			if a.Created != b.Created {
+				return a.Created < b.Created
+			}
+		case "size":
+			if a.Size != b.Size {
+				return a.Size < b.Size
+			}
+		case "tags":
+			if a.TagCount != b.TagCount {
+				return a.TagCount < b.TagCount
+			}
+		}
+		return a.Repo < b.Repo
+	}
+	sortSlice(items, less, direction == "asc")
+}
+
+// sortSlice is a tiny wrapper to centralize the flip-for-desc logic.
+func sortSlice(items []*biz.RepoMeta, less func(a, b *biz.RepoMeta) bool, asc bool) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if asc {
+			return less(items[i], items[j])
+		}
+		return less(items[j], items[i])
+	})
+}
+
+// queryIntDefault reads an int query param, falling back on parse
+// errors. strconv.Atoi rejects trailing non-digits (`42abc` → default)
+// which fmt.Sscanf would silently accept.
+func queryIntDefault(ctx *router.Context, key string, def int) int {
+	raw := ctx.Query(key)
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return def
+	}
+	return v
 }
 
 // Tags proxies /v2/<name>/tags/list. User must have pull on <name>.
@@ -175,17 +418,23 @@ func (s *RegistryService) GetManifest(ctx *router.Context) error {
 }
 
 // enrichManifestList mutates a manifest-list response in place, adding
-// an `imageSize` field to each entry in `manifests[]` and at the top
-// level. No-op if the response isn't a manifest list. Errors fetching
-// individual child manifests leave that entry's imageSize at 0; the
-// aggregate still reflects whichever fetches succeeded.
+// `imageSize` to each entry in `manifests[]` and at the top level, plus
+// a top-level `created` (the latest config.created across runnable
+// children). No-op if the response isn't a manifest list. Errors
+// fetching individual children leave that entry at zero; the aggregate
+// still reflects whichever fetches succeeded.
+//
+// Uses registryfetch.Client (shared with biz/repo_meta) for the per-
+// child fetches — the UI proxy's forward() is for transparent
+// passthrough (headers + response body), which isn't what we need
+// here.
 func (s *RegistryService) enrichManifestList(ctx *router.Context, name string, manifest map[string]any) {
 	entries, ok := manifest["manifests"].([]any)
 	if !ok || len(entries) == 0 {
 		return
 	}
 
-	sizes := make([]int64, len(entries))
+	metas := make([]registryfetch.ChildMeta, len(entries))
 	var wg sync.WaitGroup
 	for i, entryAny := range entries {
 		entry, ok := entryAny.(map[string]any)
@@ -199,52 +448,47 @@ func (s *RegistryService) enrichManifestList(ctx *router.Context, name string, m
 		wg.Add(1)
 		go func(idx int, digest string) {
 			defer wg.Done()
-			sizes[idx] = s.fetchImageSize(ctx, name, digest)
+			metas[idx] = s.fetcher.ChildMeta(ctx.Context(), name, digest)
 		}(i, digest)
 	}
 	wg.Wait()
 
 	var total int64
-	for i, sz := range sizes {
+	var latestCreated string
+	for i, m := range metas {
 		entry, ok := entries[i].(map[string]any)
 		if !ok {
 			continue
 		}
-		entry["imageSize"] = sz
-		total += sz
+		entry["imageSize"] = m.Size
+		total += m.Size
+		// Attestation manifests (platform.os == "unknown") have bogus
+		// config.created (generator timestamps, not image builds).
+		// Exclude them from the repo's representative timestamp.
+		if isAttestationEntry(entry) {
+			continue
+		}
+		// ISO-8601 timestamps compare lexicographically as dates.
+		if m.Created != "" && m.Created > latestCreated {
+			latestCreated = m.Created
+		}
 	}
 	manifest["imageSize"] = total
+	if latestCreated != "" {
+		manifest["created"] = latestCreated
+	}
 }
 
-// fetchImageSize pulls a single-arch manifest by digest and returns
-// config.size + Σ layers[].size. Returns 0 on any failure; callers
-// treat 0 as "unknown" and keep going.
-func (s *RegistryService) fetchImageSize(ctx *router.Context, name, digest string) int64 {
-	status, body, _, err := s.forward(ctx, http.MethodGet,
-		fmt.Sprintf("/v2/%s/manifests/%s", name, digest),
-		biz.RegistryAccess{Type: "repository", Name: name, Actions: []string{"pull"}})
-	if err != nil || status != http.StatusOK {
-		return 0
+// isAttestationEntry reports whether a manifest-list entry is a
+// BuildKit attestation (SBOM / provenance) rather than a runnable
+// image. Attestations carry platform.os == "unknown" by convention.
+func isAttestationEntry(entry map[string]any) bool {
+	platform, ok := entry["platform"].(map[string]any)
+	if !ok {
+		return false
 	}
-	var m struct {
-		Config *struct {
-			Size int64 `json:"size"`
-		} `json:"config"`
-		Layers []struct {
-			Size int64 `json:"size"`
-		} `json:"layers"`
-	}
-	if err := json.Unmarshal(body, &m); err != nil {
-		return 0
-	}
-	var size int64
-	if m.Config != nil {
-		size += m.Config.Size
-	}
-	for _, l := range m.Layers {
-		size += l.Size
-	}
-	return size
+	os, _ := platform["os"].(string)
+	return os == "unknown"
 }
 
 // DeleteManifest supports deletion by either tag or digest. If the

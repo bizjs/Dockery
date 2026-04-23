@@ -5,7 +5,9 @@ package ent
 import (
 	"api/internal/data/ent/auditlog"
 	"api/internal/data/ent/predicate"
+	"api/internal/data/ent/repometa"
 	"api/internal/data/ent/repopermission"
+	"api/internal/data/ent/schema"
 	"api/internal/data/ent/user"
 	"context"
 	"errors"
@@ -27,6 +29,7 @@ const (
 
 	// Node types.
 	TypeAuditLog       = "AuditLog"
+	TypeRepoMeta       = "RepoMeta"
 	TypeRepoPermission = "RepoPermission"
 	TypeUser           = "User"
 )
@@ -812,6 +815,962 @@ func (m *AuditLogMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *AuditLogMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown AuditLog edge %s", name)
+}
+
+// RepoMetaMutation represents an operation that mutates the RepoMeta nodes in the graph.
+type RepoMetaMutation struct {
+	config
+	op              Op
+	typ             string
+	id              *int
+	repo            *string
+	latest_tag      *string
+	tag_count       *int
+	addtag_count    *int
+	size            *int64
+	addsize         *int64
+	created         *string
+	platforms       *[]schema.PlatformInfo
+	appendplatforms []schema.PlatformInfo
+	pull_count      *int64
+	addpull_count   *int64
+	last_pulled_at  *time.Time
+	refreshed_at    *time.Time
+	clearedFields   map[string]struct{}
+	done            bool
+	oldValue        func(context.Context) (*RepoMeta, error)
+	predicates      []predicate.RepoMeta
+}
+
+var _ ent.Mutation = (*RepoMetaMutation)(nil)
+
+// repometaOption allows management of the mutation configuration using functional options.
+type repometaOption func(*RepoMetaMutation)
+
+// newRepoMetaMutation creates new mutation for the RepoMeta entity.
+func newRepoMetaMutation(c config, op Op, opts ...repometaOption) *RepoMetaMutation {
+	m := &RepoMetaMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeRepoMeta,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withRepoMetaID sets the ID field of the mutation.
+func withRepoMetaID(id int) repometaOption {
+	return func(m *RepoMetaMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *RepoMeta
+		)
+		m.oldValue = func(ctx context.Context) (*RepoMeta, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().RepoMeta.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withRepoMeta sets the old RepoMeta of the mutation.
+func withRepoMeta(node *RepoMeta) repometaOption {
+	return func(m *RepoMetaMutation) {
+		m.oldValue = func(context.Context) (*RepoMeta, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m RepoMetaMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m RepoMetaMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *RepoMetaMutation) ID() (id int, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *RepoMetaMutation) IDs(ctx context.Context) ([]int, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().RepoMeta.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetRepo sets the "repo" field.
+func (m *RepoMetaMutation) SetRepo(s string) {
+	m.repo = &s
+}
+
+// Repo returns the value of the "repo" field in the mutation.
+func (m *RepoMetaMutation) Repo() (r string, exists bool) {
+	v := m.repo
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRepo returns the old "repo" field's value of the RepoMeta entity.
+// If the RepoMeta object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RepoMetaMutation) OldRepo(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRepo is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRepo requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRepo: %w", err)
+	}
+	return oldValue.Repo, nil
+}
+
+// ResetRepo resets all changes to the "repo" field.
+func (m *RepoMetaMutation) ResetRepo() {
+	m.repo = nil
+}
+
+// SetLatestTag sets the "latest_tag" field.
+func (m *RepoMetaMutation) SetLatestTag(s string) {
+	m.latest_tag = &s
+}
+
+// LatestTag returns the value of the "latest_tag" field in the mutation.
+func (m *RepoMetaMutation) LatestTag() (r string, exists bool) {
+	v := m.latest_tag
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLatestTag returns the old "latest_tag" field's value of the RepoMeta entity.
+// If the RepoMeta object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RepoMetaMutation) OldLatestTag(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLatestTag is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLatestTag requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLatestTag: %w", err)
+	}
+	return oldValue.LatestTag, nil
+}
+
+// ClearLatestTag clears the value of the "latest_tag" field.
+func (m *RepoMetaMutation) ClearLatestTag() {
+	m.latest_tag = nil
+	m.clearedFields[repometa.FieldLatestTag] = struct{}{}
+}
+
+// LatestTagCleared returns if the "latest_tag" field was cleared in this mutation.
+func (m *RepoMetaMutation) LatestTagCleared() bool {
+	_, ok := m.clearedFields[repometa.FieldLatestTag]
+	return ok
+}
+
+// ResetLatestTag resets all changes to the "latest_tag" field.
+func (m *RepoMetaMutation) ResetLatestTag() {
+	m.latest_tag = nil
+	delete(m.clearedFields, repometa.FieldLatestTag)
+}
+
+// SetTagCount sets the "tag_count" field.
+func (m *RepoMetaMutation) SetTagCount(i int) {
+	m.tag_count = &i
+	m.addtag_count = nil
+}
+
+// TagCount returns the value of the "tag_count" field in the mutation.
+func (m *RepoMetaMutation) TagCount() (r int, exists bool) {
+	v := m.tag_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTagCount returns the old "tag_count" field's value of the RepoMeta entity.
+// If the RepoMeta object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RepoMetaMutation) OldTagCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTagCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTagCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTagCount: %w", err)
+	}
+	return oldValue.TagCount, nil
+}
+
+// AddTagCount adds i to the "tag_count" field.
+func (m *RepoMetaMutation) AddTagCount(i int) {
+	if m.addtag_count != nil {
+		*m.addtag_count += i
+	} else {
+		m.addtag_count = &i
+	}
+}
+
+// AddedTagCount returns the value that was added to the "tag_count" field in this mutation.
+func (m *RepoMetaMutation) AddedTagCount() (r int, exists bool) {
+	v := m.addtag_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetTagCount resets all changes to the "tag_count" field.
+func (m *RepoMetaMutation) ResetTagCount() {
+	m.tag_count = nil
+	m.addtag_count = nil
+}
+
+// SetSize sets the "size" field.
+func (m *RepoMetaMutation) SetSize(i int64) {
+	m.size = &i
+	m.addsize = nil
+}
+
+// Size returns the value of the "size" field in the mutation.
+func (m *RepoMetaMutation) Size() (r int64, exists bool) {
+	v := m.size
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSize returns the old "size" field's value of the RepoMeta entity.
+// If the RepoMeta object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RepoMetaMutation) OldSize(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSize is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSize requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSize: %w", err)
+	}
+	return oldValue.Size, nil
+}
+
+// AddSize adds i to the "size" field.
+func (m *RepoMetaMutation) AddSize(i int64) {
+	if m.addsize != nil {
+		*m.addsize += i
+	} else {
+		m.addsize = &i
+	}
+}
+
+// AddedSize returns the value that was added to the "size" field in this mutation.
+func (m *RepoMetaMutation) AddedSize() (r int64, exists bool) {
+	v := m.addsize
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSize resets all changes to the "size" field.
+func (m *RepoMetaMutation) ResetSize() {
+	m.size = nil
+	m.addsize = nil
+}
+
+// SetCreated sets the "created" field.
+func (m *RepoMetaMutation) SetCreated(s string) {
+	m.created = &s
+}
+
+// Created returns the value of the "created" field in the mutation.
+func (m *RepoMetaMutation) Created() (r string, exists bool) {
+	v := m.created
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreated returns the old "created" field's value of the RepoMeta entity.
+// If the RepoMeta object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RepoMetaMutation) OldCreated(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreated is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreated requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreated: %w", err)
+	}
+	return oldValue.Created, nil
+}
+
+// ClearCreated clears the value of the "created" field.
+func (m *RepoMetaMutation) ClearCreated() {
+	m.created = nil
+	m.clearedFields[repometa.FieldCreated] = struct{}{}
+}
+
+// CreatedCleared returns if the "created" field was cleared in this mutation.
+func (m *RepoMetaMutation) CreatedCleared() bool {
+	_, ok := m.clearedFields[repometa.FieldCreated]
+	return ok
+}
+
+// ResetCreated resets all changes to the "created" field.
+func (m *RepoMetaMutation) ResetCreated() {
+	m.created = nil
+	delete(m.clearedFields, repometa.FieldCreated)
+}
+
+// SetPlatforms sets the "platforms" field.
+func (m *RepoMetaMutation) SetPlatforms(si []schema.PlatformInfo) {
+	m.platforms = &si
+	m.appendplatforms = nil
+}
+
+// Platforms returns the value of the "platforms" field in the mutation.
+func (m *RepoMetaMutation) Platforms() (r []schema.PlatformInfo, exists bool) {
+	v := m.platforms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPlatforms returns the old "platforms" field's value of the RepoMeta entity.
+// If the RepoMeta object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RepoMetaMutation) OldPlatforms(ctx context.Context) (v []schema.PlatformInfo, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPlatforms is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPlatforms requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPlatforms: %w", err)
+	}
+	return oldValue.Platforms, nil
+}
+
+// AppendPlatforms adds si to the "platforms" field.
+func (m *RepoMetaMutation) AppendPlatforms(si []schema.PlatformInfo) {
+	m.appendplatforms = append(m.appendplatforms, si...)
+}
+
+// AppendedPlatforms returns the list of values that were appended to the "platforms" field in this mutation.
+func (m *RepoMetaMutation) AppendedPlatforms() ([]schema.PlatformInfo, bool) {
+	if len(m.appendplatforms) == 0 {
+		return nil, false
+	}
+	return m.appendplatforms, true
+}
+
+// ClearPlatforms clears the value of the "platforms" field.
+func (m *RepoMetaMutation) ClearPlatforms() {
+	m.platforms = nil
+	m.appendplatforms = nil
+	m.clearedFields[repometa.FieldPlatforms] = struct{}{}
+}
+
+// PlatformsCleared returns if the "platforms" field was cleared in this mutation.
+func (m *RepoMetaMutation) PlatformsCleared() bool {
+	_, ok := m.clearedFields[repometa.FieldPlatforms]
+	return ok
+}
+
+// ResetPlatforms resets all changes to the "platforms" field.
+func (m *RepoMetaMutation) ResetPlatforms() {
+	m.platforms = nil
+	m.appendplatforms = nil
+	delete(m.clearedFields, repometa.FieldPlatforms)
+}
+
+// SetPullCount sets the "pull_count" field.
+func (m *RepoMetaMutation) SetPullCount(i int64) {
+	m.pull_count = &i
+	m.addpull_count = nil
+}
+
+// PullCount returns the value of the "pull_count" field in the mutation.
+func (m *RepoMetaMutation) PullCount() (r int64, exists bool) {
+	v := m.pull_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPullCount returns the old "pull_count" field's value of the RepoMeta entity.
+// If the RepoMeta object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RepoMetaMutation) OldPullCount(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPullCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPullCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPullCount: %w", err)
+	}
+	return oldValue.PullCount, nil
+}
+
+// AddPullCount adds i to the "pull_count" field.
+func (m *RepoMetaMutation) AddPullCount(i int64) {
+	if m.addpull_count != nil {
+		*m.addpull_count += i
+	} else {
+		m.addpull_count = &i
+	}
+}
+
+// AddedPullCount returns the value that was added to the "pull_count" field in this mutation.
+func (m *RepoMetaMutation) AddedPullCount() (r int64, exists bool) {
+	v := m.addpull_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetPullCount resets all changes to the "pull_count" field.
+func (m *RepoMetaMutation) ResetPullCount() {
+	m.pull_count = nil
+	m.addpull_count = nil
+}
+
+// SetLastPulledAt sets the "last_pulled_at" field.
+func (m *RepoMetaMutation) SetLastPulledAt(t time.Time) {
+	m.last_pulled_at = &t
+}
+
+// LastPulledAt returns the value of the "last_pulled_at" field in the mutation.
+func (m *RepoMetaMutation) LastPulledAt() (r time.Time, exists bool) {
+	v := m.last_pulled_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastPulledAt returns the old "last_pulled_at" field's value of the RepoMeta entity.
+// If the RepoMeta object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RepoMetaMutation) OldLastPulledAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastPulledAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastPulledAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastPulledAt: %w", err)
+	}
+	return oldValue.LastPulledAt, nil
+}
+
+// ClearLastPulledAt clears the value of the "last_pulled_at" field.
+func (m *RepoMetaMutation) ClearLastPulledAt() {
+	m.last_pulled_at = nil
+	m.clearedFields[repometa.FieldLastPulledAt] = struct{}{}
+}
+
+// LastPulledAtCleared returns if the "last_pulled_at" field was cleared in this mutation.
+func (m *RepoMetaMutation) LastPulledAtCleared() bool {
+	_, ok := m.clearedFields[repometa.FieldLastPulledAt]
+	return ok
+}
+
+// ResetLastPulledAt resets all changes to the "last_pulled_at" field.
+func (m *RepoMetaMutation) ResetLastPulledAt() {
+	m.last_pulled_at = nil
+	delete(m.clearedFields, repometa.FieldLastPulledAt)
+}
+
+// SetRefreshedAt sets the "refreshed_at" field.
+func (m *RepoMetaMutation) SetRefreshedAt(t time.Time) {
+	m.refreshed_at = &t
+}
+
+// RefreshedAt returns the value of the "refreshed_at" field in the mutation.
+func (m *RepoMetaMutation) RefreshedAt() (r time.Time, exists bool) {
+	v := m.refreshed_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRefreshedAt returns the old "refreshed_at" field's value of the RepoMeta entity.
+// If the RepoMeta object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RepoMetaMutation) OldRefreshedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRefreshedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRefreshedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRefreshedAt: %w", err)
+	}
+	return oldValue.RefreshedAt, nil
+}
+
+// ResetRefreshedAt resets all changes to the "refreshed_at" field.
+func (m *RepoMetaMutation) ResetRefreshedAt() {
+	m.refreshed_at = nil
+}
+
+// Where appends a list predicates to the RepoMetaMutation builder.
+func (m *RepoMetaMutation) Where(ps ...predicate.RepoMeta) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the RepoMetaMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *RepoMetaMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.RepoMeta, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *RepoMetaMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *RepoMetaMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (RepoMeta).
+func (m *RepoMetaMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *RepoMetaMutation) Fields() []string {
+	fields := make([]string, 0, 9)
+	if m.repo != nil {
+		fields = append(fields, repometa.FieldRepo)
+	}
+	if m.latest_tag != nil {
+		fields = append(fields, repometa.FieldLatestTag)
+	}
+	if m.tag_count != nil {
+		fields = append(fields, repometa.FieldTagCount)
+	}
+	if m.size != nil {
+		fields = append(fields, repometa.FieldSize)
+	}
+	if m.created != nil {
+		fields = append(fields, repometa.FieldCreated)
+	}
+	if m.platforms != nil {
+		fields = append(fields, repometa.FieldPlatforms)
+	}
+	if m.pull_count != nil {
+		fields = append(fields, repometa.FieldPullCount)
+	}
+	if m.last_pulled_at != nil {
+		fields = append(fields, repometa.FieldLastPulledAt)
+	}
+	if m.refreshed_at != nil {
+		fields = append(fields, repometa.FieldRefreshedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *RepoMetaMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case repometa.FieldRepo:
+		return m.Repo()
+	case repometa.FieldLatestTag:
+		return m.LatestTag()
+	case repometa.FieldTagCount:
+		return m.TagCount()
+	case repometa.FieldSize:
+		return m.Size()
+	case repometa.FieldCreated:
+		return m.Created()
+	case repometa.FieldPlatforms:
+		return m.Platforms()
+	case repometa.FieldPullCount:
+		return m.PullCount()
+	case repometa.FieldLastPulledAt:
+		return m.LastPulledAt()
+	case repometa.FieldRefreshedAt:
+		return m.RefreshedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *RepoMetaMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case repometa.FieldRepo:
+		return m.OldRepo(ctx)
+	case repometa.FieldLatestTag:
+		return m.OldLatestTag(ctx)
+	case repometa.FieldTagCount:
+		return m.OldTagCount(ctx)
+	case repometa.FieldSize:
+		return m.OldSize(ctx)
+	case repometa.FieldCreated:
+		return m.OldCreated(ctx)
+	case repometa.FieldPlatforms:
+		return m.OldPlatforms(ctx)
+	case repometa.FieldPullCount:
+		return m.OldPullCount(ctx)
+	case repometa.FieldLastPulledAt:
+		return m.OldLastPulledAt(ctx)
+	case repometa.FieldRefreshedAt:
+		return m.OldRefreshedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown RepoMeta field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *RepoMetaMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case repometa.FieldRepo:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRepo(v)
+		return nil
+	case repometa.FieldLatestTag:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLatestTag(v)
+		return nil
+	case repometa.FieldTagCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTagCount(v)
+		return nil
+	case repometa.FieldSize:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSize(v)
+		return nil
+	case repometa.FieldCreated:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreated(v)
+		return nil
+	case repometa.FieldPlatforms:
+		v, ok := value.([]schema.PlatformInfo)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPlatforms(v)
+		return nil
+	case repometa.FieldPullCount:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPullCount(v)
+		return nil
+	case repometa.FieldLastPulledAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastPulledAt(v)
+		return nil
+	case repometa.FieldRefreshedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRefreshedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown RepoMeta field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *RepoMetaMutation) AddedFields() []string {
+	var fields []string
+	if m.addtag_count != nil {
+		fields = append(fields, repometa.FieldTagCount)
+	}
+	if m.addsize != nil {
+		fields = append(fields, repometa.FieldSize)
+	}
+	if m.addpull_count != nil {
+		fields = append(fields, repometa.FieldPullCount)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *RepoMetaMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case repometa.FieldTagCount:
+		return m.AddedTagCount()
+	case repometa.FieldSize:
+		return m.AddedSize()
+	case repometa.FieldPullCount:
+		return m.AddedPullCount()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *RepoMetaMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case repometa.FieldTagCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddTagCount(v)
+		return nil
+	case repometa.FieldSize:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSize(v)
+		return nil
+	case repometa.FieldPullCount:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddPullCount(v)
+		return nil
+	}
+	return fmt.Errorf("unknown RepoMeta numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *RepoMetaMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(repometa.FieldLatestTag) {
+		fields = append(fields, repometa.FieldLatestTag)
+	}
+	if m.FieldCleared(repometa.FieldCreated) {
+		fields = append(fields, repometa.FieldCreated)
+	}
+	if m.FieldCleared(repometa.FieldPlatforms) {
+		fields = append(fields, repometa.FieldPlatforms)
+	}
+	if m.FieldCleared(repometa.FieldLastPulledAt) {
+		fields = append(fields, repometa.FieldLastPulledAt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *RepoMetaMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *RepoMetaMutation) ClearField(name string) error {
+	switch name {
+	case repometa.FieldLatestTag:
+		m.ClearLatestTag()
+		return nil
+	case repometa.FieldCreated:
+		m.ClearCreated()
+		return nil
+	case repometa.FieldPlatforms:
+		m.ClearPlatforms()
+		return nil
+	case repometa.FieldLastPulledAt:
+		m.ClearLastPulledAt()
+		return nil
+	}
+	return fmt.Errorf("unknown RepoMeta nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *RepoMetaMutation) ResetField(name string) error {
+	switch name {
+	case repometa.FieldRepo:
+		m.ResetRepo()
+		return nil
+	case repometa.FieldLatestTag:
+		m.ResetLatestTag()
+		return nil
+	case repometa.FieldTagCount:
+		m.ResetTagCount()
+		return nil
+	case repometa.FieldSize:
+		m.ResetSize()
+		return nil
+	case repometa.FieldCreated:
+		m.ResetCreated()
+		return nil
+	case repometa.FieldPlatforms:
+		m.ResetPlatforms()
+		return nil
+	case repometa.FieldPullCount:
+		m.ResetPullCount()
+		return nil
+	case repometa.FieldLastPulledAt:
+		m.ResetLastPulledAt()
+		return nil
+	case repometa.FieldRefreshedAt:
+		m.ResetRefreshedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown RepoMeta field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *RepoMetaMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *RepoMetaMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *RepoMetaMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *RepoMetaMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *RepoMetaMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *RepoMetaMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *RepoMetaMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown RepoMeta unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *RepoMetaMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown RepoMeta edge %s", name)
 }
 
 // RepoPermissionMutation represents an operation that mutates the RepoPermission nodes in the graph.

@@ -95,6 +95,12 @@ interface ManifestV2 {
   manifests?: ManifestEntry[];
   /** Aggregated image size across all platforms; proxy-injected. */
   imageSize?: number;
+  /**
+   * Latest config.created across runnable children; proxy-injected.
+   * Only present on manifest lists — single-arch manifests carry
+   * `created` in the config blob, not on the manifest itself.
+   */
+  created?: string;
 }
 
 const MANIFEST_LIST_MEDIA_TYPES = new Set([
@@ -125,6 +131,64 @@ interface ConfigBlob {
     comment?: string;
     empty_layer?: boolean;
   }>;
+}
+
+/**
+ * Aggregated Catalog view backed by the server-side repo_meta cache.
+ * One request returns a page of repositories with their representative
+ * tag's meta already resolved — no per-row fan-out from the browser.
+ *
+ * The cache is kept in sync by distribution webhooks + a periodic
+ * reconciler; see apps/api/internal/biz/repo_meta.go.
+ */
+
+export interface OverviewPlatform {
+  os?: string;
+  architecture?: string;
+  variant?: string;
+}
+
+export interface OverviewItem {
+  repo: string;
+  latest_tag?: string;
+  tag_count: number;
+  size: number;
+  created?: string;
+  platforms?: OverviewPlatform[];
+  pull_count: number;
+  last_pulled_at?: number;
+  refreshed_at: number;
+}
+
+export interface OverviewResponse {
+  items: OverviewItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export type OverviewSortField = 'name' | 'updated' | 'size' | 'tags';
+export type OverviewSortDirection = 'asc' | 'desc';
+
+export interface OverviewParams {
+  page?: number;
+  pageSize?: number;
+  sort?: OverviewSortField;
+  direction?: OverviewSortDirection;
+  q?: string;
+}
+
+export async function getOverview(p: OverviewParams = {}): Promise<OverviewResponse> {
+  const qs = new URLSearchParams();
+  if (p.page !== undefined) qs.set('page', String(p.page));
+  if (p.pageSize !== undefined) qs.set('page_size', String(p.pageSize));
+  if (p.sort) qs.set('sort', p.sort);
+  if (p.direction) qs.set('direction', p.direction);
+  if (p.q) qs.set('q', p.q);
+  const suffix = qs.toString();
+  return api.get<OverviewResponse>(
+    `/api/registry/overview${suffix ? '?' + suffix : ''}`,
+  );
 }
 
 /** List repositories visible to the current session user. */
@@ -180,6 +244,9 @@ export async function getImageInfo(repository: string, tag: string): Promise<Ima
       tag,
       digest: '',
       size: totalSize,
+      // Backend aggregates `created` across runnable children; absent
+      // if every child fetch failed (rare) — UI falls back to '-'.
+      created: manifest.created,
       layers: 0,
       platforms,
     };

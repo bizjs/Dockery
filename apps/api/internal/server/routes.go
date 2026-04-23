@@ -34,6 +34,11 @@ func registerRoutes(r *router.Router, svcs *service.Services, sm *session.Manage
 func registerPublicRoutes(r *router.Router, svcs *service.Services) {
 	svcs.System.Register(r)
 	r.GET("/token", svcs.Token.Issue)
+	// Webhook callback from the upstream distribution registry. Auth'd
+	// via a shared bearer secret (see biz/webhook_secret.go), not session.
+	// Loopback-only in the container image; in remote deployments, the
+	// route should be restricted at the nginx layer too.
+	r.POST("/api/internal/registry-events", svcs.Webhook.Handle)
 }
 
 // registerAuthRoutes — endpoints that need session context but not
@@ -60,6 +65,7 @@ func registerSessionRoutes(api *router.Router, svcs *service.Services) {
 	// `.+` against the trailing literal (/tags, /manifests, /blobs) so
 	// the match unambiguously resolves.
 	g.GET("/registry/catalog", svcs.Registry.Catalog)
+	g.GET("/registry/overview", svcs.Registry.Overview)
 	g.GET("/registry/{name:.+}/tags", svcs.Registry.Tags)
 	g.GET("/registry/{name:.+}/manifests/{ref}", svcs.Registry.GetManifest)
 	g.DELETE("/registry/{name:.+}/manifests/{ref}", svcs.Registry.DeleteManifest)

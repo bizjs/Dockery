@@ -17,7 +17,7 @@ import (
 )
 
 // ProviderSet is data providers.
-var ProviderSet = wire.NewSet(NewData, NewUserRepo, NewPermissionRepo, NewAuditRepo)
+var ProviderSet = wire.NewSet(NewData, NewUserRepo, NewPermissionRepo, NewAuditRepo, NewRepoMetaRepo)
 
 // Data wraps shared data-layer resources. Biz-level repos reach the ent
 // client through DB() rather than importing the ent package themselves,

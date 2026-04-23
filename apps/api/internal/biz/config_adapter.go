@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"api/internal/conf"
+	"api/internal/util/registryfetch"
 
 	"github.com/bizjs/kratoscarf/auth/session"
 )
@@ -16,6 +17,52 @@ func NewKeystoreConfigFromConf(c *conf.Dockery) KeystoreConfig {
 		PrivatePath: c.Keystore.PrivatePath,
 		JWKSPath:    c.Keystore.JWKSPath,
 	}
+}
+
+// NewWebhookSecretConfigFromConf maps the yaml webhook section. Falls
+// back to the container-baked default path so operators can leave the
+// section out entirely.
+func NewWebhookSecretConfigFromConf(c *conf.Dockery) WebhookSecretConfig {
+	path := c.Webhook.SecretPath
+	if path == "" {
+		path = "/data/config/webhook-secret"
+	}
+	return WebhookSecretConfig{Path: path}
+}
+
+// RegistryUpstreamURL is the base URL other biz components (reconciler,
+// meta refresher) use for /v2/ calls against the local distribution
+// registry. Defaults to 127.0.0.1:5001 (the in-container nginx-less
+// port); override via `dockery.registry.upstream_url`.
+type RegistryUpstreamURL string
+
+// NewRegistryUpstreamURL resolves the upstream base URL from conf with
+// a sane container default.
+func NewRegistryUpstreamURL(c *conf.Dockery) RegistryUpstreamURL {
+	u := c.Registry.UpstreamURL
+	if u == "" {
+		u = "http://127.0.0.1:5001"
+	}
+	return RegistryUpstreamURL(u)
+}
+
+// NewRegistryFetchClient wires a *registryfetch.Client for components
+// that need to hit the upstream registry (webhook-driven refresh, UI
+// overview enrichment). Subject is a literal because it only surfaces
+// in the upstream registry's logs for call-site correlation.
+func NewRegistryFetchClient(tokens *TokenIssuer, upstream RegistryUpstreamURL) *registryfetch.Client {
+	return registryfetch.New(tokens, string(upstream), registryfetch.WithSubject("dockery-api"))
+}
+
+// NewReconcilerConfigFromConf derives the reconciler's knobs from yaml.
+// Zero/negative IntervalMinutes falls through to NewReconciler's 30-min
+// default, so leaving the section out means "use the default".
+func NewReconcilerConfigFromConf(c *conf.Dockery) ReconcilerConfig {
+	var interval time.Duration
+	if c.Reconciler.IntervalMinutes > 0 {
+		interval = time.Duration(c.Reconciler.IntervalMinutes) * time.Minute
+	}
+	return ReconcilerConfig{Interval: interval}
 }
 
 // NewTokenIssuerConfigFromConf derives a TokenIssuerConfig from the

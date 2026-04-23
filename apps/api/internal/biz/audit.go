@@ -26,6 +26,12 @@ const (
 	ActionGCStarted           = "gc.started"
 	ActionGCCompleted         = "gc.completed"
 	ActionKeyRotated          = "key.rotated"
+	// Reconciler discrepancies — triggered when the repo_meta cache
+	// drifts from upstream /v2/_catalog (missed webhook event, etc.).
+	// Writing these means something was wrong at the moment of check;
+	// the row is already being fixed when the audit fires.
+	ActionReconcileAdded   = "registry.reconcile.added"
+	ActionReconcileRemoved = "registry.reconcile.removed"
 )
 
 // AuditEntry is the biz-layer view of one audit_log row. Ts is unix

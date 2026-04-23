@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"api/internal/biz"
-	"api/internal/pkg/scope"
+	"api/internal/util/scope"
 
 	"github.com/bizjs/kratoscarf/router"
 )

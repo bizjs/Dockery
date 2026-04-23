@@ -10,11 +10,14 @@ package conf
 // Keeping this out of conf.proto lets us iterate on application-level
 // knobs without touching the Kratos-managed protobuf schema.
 type Dockery struct {
-	Keystore DockeryKeystore `json:"keystore" yaml:"keystore"`
-	Token    DockeryToken    `json:"token"    yaml:"token"`
-	Admin    DockeryAdmin    `json:"admin"    yaml:"admin"`
-	Session  DockerySession  `json:"session"  yaml:"session"`
-	GC       DockeryGC       `json:"gc"       yaml:"gc"`
+	Keystore   DockeryKeystore   `json:"keystore"   yaml:"keystore"`
+	Token      DockeryToken      `json:"token"      yaml:"token"`
+	Admin      DockeryAdmin      `json:"admin"      yaml:"admin"`
+	Session    DockerySession    `json:"session"    yaml:"session"`
+	GC         DockeryGC         `json:"gc"         yaml:"gc"`
+	Webhook    DockeryWebhook    `json:"webhook"    yaml:"webhook"`
+	Registry   DockeryRegistry   `json:"registry"   yaml:"registry"`
+	Reconciler DockeryReconciler `json:"reconciler" yaml:"reconciler"`
 }
 
 // DockeryKeystore is the filesystem location of the Ed25519 signing
@@ -80,6 +83,40 @@ type DockeryGC struct {
 	// TimeoutSeconds is the hard cap on the full stop/gc/restart cycle.
 	// Default: 1800 (30 min). Raise for very large registries.
 	TimeoutSeconds int `json:"timeout_seconds" yaml:"timeout_seconds"`
+}
+
+// DockeryWebhook configures inbound notifications from distribution
+// registry. The secret file is read-or-generated on boot and the same
+// value is templated into the registry's `notifications.endpoints[].headers.Authorization`
+// by the supervisord registry wrapper — both sides then share one token.
+type DockeryWebhook struct {
+	// SecretPath is the file holding the 32-byte hex shared secret.
+	// Auto-generated on first boot if missing. Default:
+	// /data/config/webhook-secret.
+	SecretPath string `json:"secret_path" yaml:"secret_path"`
+}
+
+// DockeryRegistry tells dockery-api where the local distribution
+// registry lives. Everything that used to be hardcoded 127.0.0.1:5001
+// flows through here so dev setups (different ports) and container
+// (loopback + private port) share the same code path.
+type DockeryRegistry struct {
+	// UpstreamURL is the base URL dockery-api uses for its own calls
+	// into /v2/ (reconciler, meta refresh, proxy). Default:
+	// http://127.0.0.1:5001.
+	UpstreamURL string `json:"upstream_url" yaml:"upstream_url"`
+}
+
+// DockeryReconciler tunes the background drift-detector that keeps
+// repo_meta aligned with distribution's /v2/_catalog when webhook
+// events are lost. Interval only — the reconciler's other parameters
+// (startup delay, upstream timeout) are internal defaults because
+// there's been no case for tweaking them.
+type DockeryReconciler struct {
+	// IntervalMinutes is how often the reconciler does a full catalog
+	// diff. Default: 30. Lowering helps in environments with flaky
+	// webhook delivery; raising saves upstream load on huge registries.
+	IntervalMinutes int `json:"interval_minutes" yaml:"interval_minutes"`
 }
 
 // DockerySession configures the Web UI cookie session, backed by

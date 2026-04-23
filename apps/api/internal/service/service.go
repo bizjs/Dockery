@@ -13,6 +13,7 @@ var ProviderSet = wire.NewSet(
 	NewRegistryService,
 	NewTokenService,
 	NewAdminService,
+	NewWebhookService,
 	wire.Struct(new(Services), "*"),
 )
 
@@ -25,4 +26,5 @@ type Services struct {
 	Registry   *RegistryService
 	Token      *TokenService
 	Admin      *AdminService
+	Webhook    *WebhookService
 }

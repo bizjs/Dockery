@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"api/internal/pkg/scope"
+	"api/internal/util/scope"
 )
 
 // Permission is the biz-layer representation of a repo_permissions row.

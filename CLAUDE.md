@@ -60,7 +60,7 @@ Docker daemon needs `"insecure-registries": ["localhost:5001"]` until TLS lands.
 Three long-running processes managed by **supervisord** (PID 1, priorities 10/20/30):
 
 1. `dockery-api` (`:3001`) — SQLite at `/data/db/dockery.db`, Ed25519 key at `/data/config/jwt-private.pem`, JWKS at `/data/config/jwt-jwks.json`. Runs first.
-2. `registry` (distribution 3.1.0, `:5001`) — polls for `jwt-jwks.json` (200 ms × ~150, ~30 s timeout) before `exec`, then validates incoming tokens via `auth.token.jwks`.
+2. `registry` (distribution 3.1.0, `:5001`) — polls for `jwt-jwks.json` + `webhook-secret` (200 ms × ~150, ~30 s timeout) before `exec`; the startup wrapper `sed`-substitutes `__WEBHOOK_SECRET__` into a `/run/registry-config.yml` copy so the baked image never ships a known secret. Validates incoming tokens via `auth.token.jwks`; POSTs `push`/`pull`/`delete` events to `http://127.0.0.1:3001/api/internal/registry-events` via the `notifications.endpoints` block.
 3. `nginx` (`:5000` → host `:5001`) — sole public port. Routes:
    - `/` → static UI (`/usr/share/nginx/html`)
    - `/api/*`, `/token`, `/healthz`, `/readyz` → `:3001`
@@ -69,6 +69,10 @@ Three long-running processes managed by **supervisord** (PID 1, priorities 10/20
 Two auth paths share one permission model:
 - **Docker CLI**: `docker push` → nginx → registry returns 401 with `WWW-Authenticate: Bearer realm=…/token` → docker hits `/token` (Basic Auth) → dockery-api signs an Ed25519 JWT with scoped `access` claim → registry verifies via JWKS.
 - **Web UI**: browser → nginx → `/api/registry/*` on dockery-api → (session check) → mints short-lived admin-scoped JWT for itself → forwards to `127.0.0.1:5001` → filters catalog by repo patterns before returning.
+
+### Catalog cache (repo_meta)
+
+See [docs/dockery-design.md §8.6](./docs/dockery-design.md) — that's the source of truth. Short version: the Catalog page reads a denormalized `repo_meta` table kept in sync by distribution webhooks + a periodic reconciler + the refresh worker in `biz/RepoMetaUsecase`. HTTP primitives live in `internal/util/registryfetch/` and are shared by biz and service/registry's `enrichManifestList`.
 
 ### Roles
 
@@ -94,13 +98,13 @@ Three roles in the `users` table; `users.role` alone dictates actions (no per-ro
 ### Backend structure (`apps/api/internal/`)
 
 - `conf/` — yaml config schema (`conf.proto` + `dockery.go`).
-- `data/` + `data/ent/` — ent client + repo adapters for User / RepoPermission / AuditLog.
-- `biz/` — usecases: `user`, `permission`, `token` (JWT signing), `keystore` (Ed25519 + JWKS).
-- `service/` — HTTP handlers: `system`, `auth`, `user`, `permission` (CRUD for `repo_permissions`), `registry` (UI proxy), `token` (Docker CLI realm), `admin` (GC / key rotation / audit).
+- `data/` + `data/ent/` — ent client + repo adapters for User / RepoPermission / AuditLog / RepoMeta.
+- `biz/` — usecases: `user`, `permission`, `token` (JWT signing), `keystore` (Ed25519 + JWKS), `webhook_secret` (shared Bearer for distribution notifications), `repo_meta` (catalog cache + refresh worker), `reconciler` (periodic cache-vs-registry diff).
+- `service/` — HTTP handlers: `system`, `auth`, `user`, `permission` (CRUD for `repo_permissions`), `registry` (UI proxy + `/overview` cache-backed endpoint), `token` (Docker CLI realm), `admin` (GC / key rotation / audit), `webhook` (distribution event receiver at `/api/internal/registry-events`).
 - `server/http.go` — kratoscarf wiring (ErrorEncoder / CORS / Secure / Recovery / RequestID / Validator / ResponseWrapper).
 - `server/routes.go` — three-tier grouping: public / session / session+admin.
 - `server/middleware.go` — `RequireSession`, `RequireAdmin`.
-- `pkg/scope/` — Docker scope parsing + glob matching + role→actions mapping.
+- `util/scope/` — Docker scope parsing + glob matching + role→actions mapping.
 - `cmd/api/main.go` + `user_cmd.go` + `wire_gen.go` — entry point; `user` subcommand dispatches to `user_cmd.go` without starting HTTP.
 
 ### UI conventions
@@ -123,6 +127,7 @@ shadcn/ui in `components/ui/` (added via `pnpm ui`). Tailwind v4 via `@tailwindc
 - M1 ✅ skeleton + container + kratoscarf
 - M2 ✅ keys + tokens + users + CLI + registry token auth
 - M3 ✅ UI session + login + admin/users page + UI-driven permission granting
+- M3.5 ✅ repo_meta catalog cache (webhooks + reconciler + `/api/registry/overview`) — replaces per-repo N+1 fan-out
 - M4 ⬜ GC / key rotation / audit log writes / README rebrand
 
 ## Release
