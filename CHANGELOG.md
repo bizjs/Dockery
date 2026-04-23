@@ -2,6 +2,23 @@
 
 本文件记录 Dockery 的所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0] - 2026-04-23
+
+### 变更
+
+- extract registryfetch package, deduplicate registry HTTP logic
+- **catalog**: replace client-side fan-out with server-side overview API
+
+### 新增
+
+- **catalog**: add repo_meta cache design and VM tests
+- configurable reconciler interval and pkg→util scope rename
+- **catalog**: add refresh button and debounce search input
+- harden pull tracking, parallel child fetch, and shutdown
+- add repo_meta catalog cache with webhooks and reconciler
+- optimize UI
+
+
 ## [0.5.0] - 2026-04-23
 
 ### 修复
