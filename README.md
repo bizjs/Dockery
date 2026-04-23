@@ -129,6 +129,7 @@ docker exec -it dockery dockery-api -conf /etc/dockery user delete alice
 |---|---|
 | `REGISTRY_STORAGE_*` | 原样透传给 distribution,切 S3 / OSS / Azure 等存储后端。见 [distribution 配置文档](https://distribution.github.io/distribution/about/configuration/)。 |
 | 其他 `REGISTRY_*` | `REGISTRY_<SECTION>_<FIELD>` 都会被 distribution 消费(日志级别、HTTP header 等)。 |
+| `DOCKERY_OTEL_ENDPOINT` | OTLP/HTTP 遥测端点,例如 `http://jaeger:4318`。**默认不设,遥测关闭**。distribution v3 默认会往 `localhost:4318` 刷 traces,不开收集器就会持续打 `connection refused`;Dockerfile 因此固定 `OTEL_SDK_DISABLED=true`,只有设置本变量时才打开并把 `OTEL_EXPORTER_OTLP_ENDPOINT` 指过去。 |
 
 其余项(token TTL、issuer、session cookie 等)在 `docker/rootfs/etc/dockery/config.yaml`(打到镜像里);需要定制就挂自己的 `config.yaml` 到 `/etc/dockery/`。
 
