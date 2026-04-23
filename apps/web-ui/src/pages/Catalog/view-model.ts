@@ -29,6 +29,8 @@ interface ViewState {
   searchQuery: string;
   sort: SortField;
   sortDirection: SortDirection;
+  page: number;
+  pageSize: number;
   loading: boolean;
   error: string | null;
 }
@@ -52,6 +54,8 @@ export class CatalogViewModel extends BaseViewModel<ViewState> implements ViewMo
       searchQuery: '',
       sort: 'name',
       sortDirection: 'asc',
+      page: 0,
+      pageSize: 50,
       loading: true,
       error: null,
     });
@@ -106,7 +110,9 @@ export class CatalogViewModel extends BaseViewModel<ViewState> implements ViewMo
   }
 
   setSearchQuery(query: string) {
-    this.$updateState({ searchQuery: query });
+    // Jump back to page 0 on any filter change so users don't land on
+    // page 3 of a narrowed-down result set with nothing showing.
+    this.$updateState({ searchQuery: query, page: 0 });
   }
 
   /**
@@ -119,13 +125,23 @@ export class CatalogViewModel extends BaseViewModel<ViewState> implements ViewMo
     if (this.state.sort === field) {
       this.$updateState({
         sortDirection: this.state.sortDirection === 'asc' ? 'desc' : 'asc',
+        page: 0,
       });
       return;
     }
     this.$updateState({
       sort: field,
       sortDirection: field === 'name' ? 'asc' : 'desc',
+      page: 0,
     });
+  }
+
+  setPage(page: number) {
+    this.$updateState({ page: Math.max(0, page) });
+  }
+
+  setPageSize(pageSize: number) {
+    this.$updateState({ pageSize, page: 0 });
   }
 
   async refresh() {

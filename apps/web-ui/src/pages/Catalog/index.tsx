@@ -7,7 +7,16 @@
  */
 
 import { useMemo } from 'react';
-import { ArrowDown, ArrowUp, ArrowUpDown, Package } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Package,
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { useViewModel } from '@/lib/viewmodel';
@@ -17,10 +26,17 @@ import {
   type SortField,
 } from './view-model';
 import { SearchBar } from '@/components/common/SearchBar';
-import { formatBinarySize } from '@/utils';
+import { formatBinarySize, formatDateTime } from '@/utils';
 import { compactArchLabel, formatPlatform } from '../TagList/platforms';
 import type { ImageInfo } from '@/services/registry.service';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -30,15 +46,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
-const DATE_FORMAT: Intl.DateTimeFormatOptions = {
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hour12: false,
-};
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 
 /** Tiny inline skeleton — avoids pulling in the shadcn Skeleton component. */
 function SkeletonBar({ className }: { className?: string }) {
@@ -73,6 +81,19 @@ export default function Catalog() {
       ),
     [snapshot.repositories, snapshot.searchQuery, snapshot.sort, snapshot.sortDirection],
   );
+
+  const pageCount = useMemo(
+    () => Math.max(1, Math.ceil(displayed.length / snapshot.pageSize)),
+    [displayed.length, snapshot.pageSize],
+  );
+  // Clamp page in case `displayed` shrank (e.g. data arrived late from
+  // meta fetches and filtering now yields fewer rows). VM setters reset
+  // to 0 on filter/sort changes, but this guards the derivation.
+  const currentPage = Math.min(snapshot.page, pageCount - 1);
+  const pagedRepos = useMemo(() => {
+    const start = currentPage * snapshot.pageSize;
+    return displayed.slice(start, start + snapshot.pageSize);
+  }, [displayed, currentPage, snapshot.pageSize]);
 
   const sortIcon = (field: SortField) => {
     if (snapshot.sort !== field) return <ArrowUpDown className="ml-2 h-4 w-4" />;
@@ -168,7 +189,7 @@ export default function Catalog() {
                 </TableRow>
               )}
               {!snapshot.loading &&
-                displayed.map((r) => {
+                pagedRepos.map((r) => {
                   const meta = r.meta;
                   const arch = meta ? archLabel(meta) : null;
                   return (
@@ -204,10 +225,8 @@ export default function Catalog() {
                       <TableCell className="px-4 text-sm text-muted-foreground tabular-nums">
                         {meta === undefined ? (
                           <SkeletonBar className="w-32" />
-                        ) : meta?.created ? (
-                          new Date(meta.created).toLocaleString(undefined, DATE_FORMAT)
                         ) : (
-                          '-'
+                          formatDateTime(meta?.created)
                         )}
                       </TableCell>
                       <TableCell
@@ -225,6 +244,85 @@ export default function Catalog() {
                 })}
             </TableBody>
           </Table>
+        </div>
+      )}
+
+      {!snapshot.loading && !snapshot.error && displayed.length > 0 && (
+        <div className="flex items-center justify-between text-sm">
+          <div className="text-muted-foreground">
+            Showing{' '}
+            <span className="font-medium text-foreground">
+              {currentPage * snapshot.pageSize + 1}–
+              {Math.min((currentPage + 1) * snapshot.pageSize, displayed.length)}
+            </span>{' '}
+            of <span className="font-medium text-foreground">{displayed.length}</span>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Rows per page</span>
+              <Select
+                value={String(snapshot.pageSize)}
+                onValueChange={(v) => vm.setPageSize(Number(v))}
+              >
+                <SelectTrigger className="h-8 w-20">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAGE_SIZE_OPTIONS.map((n) => (
+                    <SelectItem key={n} value={String(n)}>
+                      {n}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => vm.setPage(0)}
+                disabled={currentPage === 0}
+                aria-label="First page"
+              >
+                <ChevronsLeft className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => vm.setPage(currentPage - 1)}
+                disabled={currentPage === 0}
+                aria-label="Previous page"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="px-2 text-muted-foreground">
+                Page <span className="font-medium text-foreground">{currentPage + 1}</span> /{' '}
+                {pageCount}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => vm.setPage(currentPage + 1)}
+                disabled={currentPage >= pageCount - 1}
+                aria-label="Next page"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => vm.setPage(pageCount - 1)}
+                disabled={currentPage >= pageCount - 1}
+                aria-label="Last page"
+              >
+                <ChevronsRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

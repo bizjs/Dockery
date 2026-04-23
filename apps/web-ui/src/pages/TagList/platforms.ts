@@ -15,11 +15,18 @@ export function formatPlatform(p: Pick<PlatformEntry, 'os' | 'architecture' | 'v
  *   2 platforms → `linux/amd64, linux/arm64`
  *   3+          → `linux/amd64 +2 more`
  * The `title` is the newline-joined full list, for hover tooltip.
+ *
+ * BuildKit attestation manifests (SBOM / provenance) ship with
+ * `platform: {os: "unknown", architecture: "unknown"}` and aren't
+ * actually runnable — filter them out so summary cells show only
+ * the platforms a user could pull. Detail views still call
+ * `formatPlatform` directly and see the raw list.
  */
 export function compactArchLabel(
   platforms: ReadonlyArray<Pick<PlatformEntry, 'os' | 'architecture' | 'variant'>>,
 ): { label: string; title: string } {
-  const formatted = platforms.map(formatPlatform);
+  const runnable = platforms.filter((p) => p.os !== 'unknown');
+  const formatted = runnable.map(formatPlatform);
   const title = formatted.join('\n');
   if (formatted.length === 0) return { label: '-', title: '' };
   if (formatted.length === 1) return { label: formatted[0], title };

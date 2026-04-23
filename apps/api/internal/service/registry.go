@@ -174,10 +174,20 @@ func (s *RegistryService) GetManifest(ctx *router.Context) error {
 	return ctx.Success(manifest)
 }
 
+// childMeta is what we extract per child manifest inside a manifest
+// list: size in bytes and the config blob's `created` timestamp. Either
+// can be empty if the upstream fetch fails — callers treat zero/empty
+// as "unknown" and keep going.
+type childMeta struct {
+	size    int64
+	created string
+}
+
 // enrichManifestList mutates a manifest-list response in place, adding
-// an `imageSize` field to each entry in `manifests[]` and at the top
-// level. No-op if the response isn't a manifest list. Errors fetching
-// individual child manifests leave that entry's imageSize at 0; the
+// `imageSize` to each entry in `manifests[]` and at the top level, plus
+// a top-level `created` (the latest config.created across runnable
+// children). No-op if the response isn't a manifest list. Errors
+// fetching individual child manifests leave that entry at zero; the
 // aggregate still reflects whichever fetches succeeded.
 func (s *RegistryService) enrichManifestList(ctx *router.Context, name string, manifest map[string]any) {
 	entries, ok := manifest["manifests"].([]any)
@@ -185,7 +195,7 @@ func (s *RegistryService) enrichManifestList(ctx *router.Context, name string, m
 		return
 	}
 
-	sizes := make([]int64, len(entries))
+	metas := make([]childMeta, len(entries))
 	var wg sync.WaitGroup
 	for i, entryAny := range entries {
 		entry, ok := entryAny.(map[string]any)
@@ -199,52 +209,95 @@ func (s *RegistryService) enrichManifestList(ctx *router.Context, name string, m
 		wg.Add(1)
 		go func(idx int, digest string) {
 			defer wg.Done()
-			sizes[idx] = s.fetchImageSize(ctx, name, digest)
+			metas[idx] = s.fetchChildMeta(ctx, name, digest)
 		}(i, digest)
 	}
 	wg.Wait()
 
 	var total int64
-	for i, sz := range sizes {
+	var latestCreated string
+	for i, m := range metas {
 		entry, ok := entries[i].(map[string]any)
 		if !ok {
 			continue
 		}
-		entry["imageSize"] = sz
-		total += sz
+		entry["imageSize"] = m.size
+		total += m.size
+		// Attestation manifests (platform.os == "unknown") have bogus
+		// config.created (generator timestamps, not image builds).
+		// Exclude them from the repo's representative timestamp.
+		if isAttestationEntry(entry) {
+			continue
+		}
+		// ISO-8601 timestamps compare lexicographically as dates.
+		if m.created != "" && m.created > latestCreated {
+			latestCreated = m.created
+		}
 	}
 	manifest["imageSize"] = total
+	if latestCreated != "" {
+		manifest["created"] = latestCreated
+	}
 }
 
-// fetchImageSize pulls a single-arch manifest by digest and returns
-// config.size + Σ layers[].size. Returns 0 on any failure; callers
-// treat 0 as "unknown" and keep going.
-func (s *RegistryService) fetchImageSize(ctx *router.Context, name, digest string) int64 {
+// fetchChildMeta pulls a single-arch manifest + its config blob and
+// returns both the image size (config.size + Σ layers[].size) and the
+// build timestamp (config.created). Returns a zero-valued childMeta on
+// any failure; callers keep going.
+func (s *RegistryService) fetchChildMeta(ctx *router.Context, name, digest string) childMeta {
 	status, body, _, err := s.forward(ctx, http.MethodGet,
 		fmt.Sprintf("/v2/%s/manifests/%s", name, digest),
 		biz.RegistryAccess{Type: "repository", Name: name, Actions: []string{"pull"}})
 	if err != nil || status != http.StatusOK {
-		return 0
+		return childMeta{}
 	}
 	var m struct {
 		Config *struct {
-			Size int64 `json:"size"`
+			Size   int64  `json:"size"`
+			Digest string `json:"digest"`
 		} `json:"config"`
 		Layers []struct {
 			Size int64 `json:"size"`
 		} `json:"layers"`
 	}
 	if err := json.Unmarshal(body, &m); err != nil {
-		return 0
+		return childMeta{}
 	}
-	var size int64
+	out := childMeta{}
 	if m.Config != nil {
-		size += m.Config.Size
+		out.size += m.Config.Size
 	}
 	for _, l := range m.Layers {
-		size += l.Size
+		out.size += l.Size
 	}
-	return size
+	// Best-effort config-blob fetch for `created`. If it fails, we
+	// still return the size we already computed.
+	if m.Config != nil && m.Config.Digest != "" {
+		cstatus, cbody, _, cerr := s.forward(ctx, http.MethodGet,
+			fmt.Sprintf("/v2/%s/blobs/%s", name, m.Config.Digest),
+			biz.RegistryAccess{Type: "repository", Name: name, Actions: []string{"pull"}})
+		if cerr == nil && cstatus == http.StatusOK {
+			var cfg struct {
+				Created string `json:"created"`
+			}
+			if json.Unmarshal(cbody, &cfg) == nil {
+				out.created = cfg.Created
+			}
+		}
+	}
+	return out
+}
+
+// isAttestationEntry reports whether a manifest-list entry is a
+// BuildKit attestation (SBOM / provenance) rather than a runnable
+// image. Attestations carry platform.os == "unknown" by convention.
+func isAttestationEntry(entry map[string]any) bool {
+	platform, ok := entry["platform"].(map[string]any)
+	if !ok {
+		return false
+	}
+	os, _ := platform["os"].(string)
+	return os == "unknown"
 }
 
 // DeleteManifest supports deletion by either tag or digest. If the

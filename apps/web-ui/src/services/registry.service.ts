@@ -95,6 +95,12 @@ interface ManifestV2 {
   manifests?: ManifestEntry[];
   /** Aggregated image size across all platforms; proxy-injected. */
   imageSize?: number;
+  /**
+   * Latest config.created across runnable children; proxy-injected.
+   * Only present on manifest lists — single-arch manifests carry
+   * `created` in the config blob, not on the manifest itself.
+   */
+  created?: string;
 }
 
 const MANIFEST_LIST_MEDIA_TYPES = new Set([
@@ -180,6 +186,9 @@ export async function getImageInfo(repository: string, tag: string): Promise<Ima
       tag,
       digest: '',
       size: totalSize,
+      // Backend aggregates `created` across runnable children; absent
+      // if every child fetch failed (rare) — UI falls back to '-'.
+      created: manifest.created,
       layers: 0,
       platforms,
     };
