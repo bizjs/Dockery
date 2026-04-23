@@ -114,6 +114,7 @@ shadcn/ui in `components/ui/` (added via `pnpm ui`). Tailwind v4 via `@tailwindc
 - `DOCKERY_ADMIN_PASSWORD` (**required on first boot**, otherwise api fatals) — first-boot admin password.
 - `REGISTRY_AUTH_TOKEN_REALM` (default `http://localhost:5001/token`) — URL the docker CLI reaches back to for tokens; must match the external URL of the Dockery deployment.
 - `REGISTRY_STORAGE_*` — passed through to distribution (S3 etc.).
+- `DOCKERY_OTEL_ENDPOINT` (default **unset** → telemetry disabled) — OTLP/HTTP endpoint for distribution's built-in tracing, e.g. `http://jaeger:4318`. Set it to opt in. Dockerfile pins `OTEL_SDK_DISABLED=true` so the default container stays silent (otherwise distribution v3 spams `connection refused` against `localhost:4318`); the registry wrapper flips that when this var is present and exports `OTEL_EXPORTER_OTLP_ENDPOINT` to it.
 
 **Build-time (Vite, `apps/web-ui/.env*`)**: `VITE_REGISTRY_URL` (falls back to `window.location.origin`), plus a few legacy `VITE_*` flags retained for now.
 

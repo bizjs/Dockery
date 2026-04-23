@@ -129,6 +129,7 @@ Grouped by tier: **required** to boot, **common** to set in production, and **ot
 |---|---|
 | `REGISTRY_STORAGE_*` | Forwarded verbatim to distribution. Switch blob backend to S3 / OSS / Azure, etc. See [distribution configuration](https://distribution.github.io/distribution/about/configuration/). |
 | Any other `REGISTRY_*` | `REGISTRY_<SECTION>_<FIELD>` is consumed by distribution (log level, HTTP headers, etc.). |
+| `DOCKERY_OTEL_ENDPOINT` | OTLP/HTTP endpoint for telemetry, e.g. `http://jaeger:4318`. **Unset by default → telemetry disabled.** distribution v3 otherwise tries to POST traces to `localhost:4318` and floods the log with `connection refused`; the Dockerfile pins `OTEL_SDK_DISABLED=true` to silence that, and the registry wrapper flips it back on + exports `OTEL_EXPORTER_OTLP_ENDPOINT` only when this var is set. |
 
 Token TTL, issuer, session cookies etc. live in `docker/rootfs/etc/dockery/config.yaml` (baked into the image). To customize, mount your own over `/etc/dockery/`.
 

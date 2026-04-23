@@ -73,6 +73,14 @@ EXPOSE 5000
 #   /data/config     — Ed25519 jwt keypair + registry http.secret
 VOLUME /data
 
+# Silence distribution v3's built-in OpenTelemetry trace exporter. By
+# default it tries to POST to localhost:4318 every few seconds and
+# spams the log with connection-refused errors when no collector is
+# running. Users opt in by setting DOCKERY_OTEL_ENDPOINT at runtime;
+# the supervisord registry wrapper translates that into the standard
+# OTEL_* vars and unsets this.
+ENV OTEL_SDK_DISABLED=true
+
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD wget -qO- http://127.0.0.1:5000/healthz >/dev/null 2>&1 || exit 1
 
