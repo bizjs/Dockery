@@ -95,7 +95,8 @@ func newReconcilerRig(t *testing.T, upstreamURL string, cached []string) (*Recon
 	audit := &memoryAuditRepo{}
 	auditUC := NewAuditUsecase(audit, log.DefaultLogger)
 
-	metaUC := NewRepoMetaUsecase(repo, iss, RegistryUpstreamURL("http://127.0.0.1:1"), log.DefaultLogger)
+	fetcher := NewRegistryFetchClient(iss, RegistryUpstreamURL("http://127.0.0.1:1"))
+	metaUC := NewRepoMetaUsecase(repo, fetcher, log.DefaultLogger)
 	t.Cleanup(metaUC.Close)
 
 	r := NewReconciler(metaUC, iss, auditUC,

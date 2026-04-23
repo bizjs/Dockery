@@ -104,13 +104,12 @@ func (s *WebhookService) Handle(ctx *router.Context) error {
 }
 
 func (s *WebhookService) authorize(ctx *router.Context) error {
+	// Single message for both "missing" and "wrong" token so an attacker
+	// probing the endpoint can't distinguish which failure mode they hit.
 	auth := ctx.Header("Authorization")
 	const prefix = "Bearer "
-	if !strings.HasPrefix(auth, prefix) {
-		return response.ErrUnauthorized.WithMessage("missing bearer token")
-	}
-	if !s.secret.Verify(auth[len(prefix):]) {
-		return response.ErrUnauthorized.WithMessage("invalid webhook secret")
+	if !strings.HasPrefix(auth, prefix) || !s.secret.Verify(auth[len(prefix):]) {
+		return response.ErrUnauthorized.WithMessage("unauthorized")
 	}
 	return nil
 }

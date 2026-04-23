@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"api/internal/biz"
+	"api/internal/util/registryfetch"
 	"api/internal/util/scope"
 
 	"github.com/bizjs/kratoscarf/response"
@@ -39,8 +40,14 @@ type RegistryService struct {
 	audit       *biz.AuditUsecase
 	maintenance *biz.Maintenance
 	meta        *biz.RepoMetaUsecase
-	upstream    string
-	client      *http.Client
+	// fetcher is used only by the UI-proxy enrichment path (manifest
+	// list size/created aggregation). The UI proxy's transparent
+	// passthrough (forward method) mints its own per-request token
+	// because it preserves upstream headers — that's a different shape
+	// from what registryfetch.Client offers.
+	fetcher  *registryfetch.Client
+	upstream string
+	client   *http.Client
 }
 
 // NewRegistryService wires the proxy. Upstream comes from conf so dev
@@ -53,6 +60,7 @@ func NewRegistryService(
 	audit *biz.AuditUsecase,
 	maintenance *biz.Maintenance,
 	meta *biz.RepoMetaUsecase,
+	fetcher *registryfetch.Client,
 	upstream biz.RegistryUpstreamURL,
 ) *RegistryService {
 	return &RegistryService{
@@ -62,6 +70,7 @@ func NewRegistryService(
 		audit:       audit,
 		maintenance: maintenance,
 		meta:        meta,
+		fetcher:     fetcher,
 		upstream:    string(upstream),
 		client:      &http.Client{Timeout: 30 * time.Second},
 	}
@@ -408,28 +417,24 @@ func (s *RegistryService) GetManifest(ctx *router.Context) error {
 	return ctx.Success(manifest)
 }
 
-// childMeta is what we extract per child manifest inside a manifest
-// list: size in bytes and the config blob's `created` timestamp. Either
-// can be empty if the upstream fetch fails — callers treat zero/empty
-// as "unknown" and keep going.
-type childMeta struct {
-	size    int64
-	created string
-}
-
 // enrichManifestList mutates a manifest-list response in place, adding
 // `imageSize` to each entry in `manifests[]` and at the top level, plus
 // a top-level `created` (the latest config.created across runnable
 // children). No-op if the response isn't a manifest list. Errors
-// fetching individual child manifests leave that entry at zero; the
-// aggregate still reflects whichever fetches succeeded.
+// fetching individual children leave that entry at zero; the aggregate
+// still reflects whichever fetches succeeded.
+//
+// Uses registryfetch.Client (shared with biz/repo_meta) for the per-
+// child fetches — the UI proxy's forward() is for transparent
+// passthrough (headers + response body), which isn't what we need
+// here.
 func (s *RegistryService) enrichManifestList(ctx *router.Context, name string, manifest map[string]any) {
 	entries, ok := manifest["manifests"].([]any)
 	if !ok || len(entries) == 0 {
 		return
 	}
 
-	metas := make([]childMeta, len(entries))
+	metas := make([]registryfetch.ChildMeta, len(entries))
 	var wg sync.WaitGroup
 	for i, entryAny := range entries {
 		entry, ok := entryAny.(map[string]any)
@@ -443,7 +448,7 @@ func (s *RegistryService) enrichManifestList(ctx *router.Context, name string, m
 		wg.Add(1)
 		go func(idx int, digest string) {
 			defer wg.Done()
-			metas[idx] = s.fetchChildMeta(ctx, name, digest)
+			metas[idx] = s.fetcher.ChildMeta(ctx.Context(), name, digest)
 		}(i, digest)
 	}
 	wg.Wait()
@@ -455,8 +460,8 @@ func (s *RegistryService) enrichManifestList(ctx *router.Context, name string, m
 		if !ok {
 			continue
 		}
-		entry["imageSize"] = m.size
-		total += m.size
+		entry["imageSize"] = m.Size
+		total += m.Size
 		// Attestation manifests (platform.os == "unknown") have bogus
 		// config.created (generator timestamps, not image builds).
 		// Exclude them from the repo's representative timestamp.
@@ -464,62 +469,14 @@ func (s *RegistryService) enrichManifestList(ctx *router.Context, name string, m
 			continue
 		}
 		// ISO-8601 timestamps compare lexicographically as dates.
-		if m.created != "" && m.created > latestCreated {
-			latestCreated = m.created
+		if m.Created != "" && m.Created > latestCreated {
+			latestCreated = m.Created
 		}
 	}
 	manifest["imageSize"] = total
 	if latestCreated != "" {
 		manifest["created"] = latestCreated
 	}
-}
-
-// fetchChildMeta pulls a single-arch manifest + its config blob and
-// returns both the image size (config.size + Σ layers[].size) and the
-// build timestamp (config.created). Returns a zero-valued childMeta on
-// any failure; callers keep going.
-func (s *RegistryService) fetchChildMeta(ctx *router.Context, name, digest string) childMeta {
-	status, body, _, err := s.forward(ctx, http.MethodGet,
-		fmt.Sprintf("/v2/%s/manifests/%s", name, digest),
-		biz.RegistryAccess{Type: "repository", Name: name, Actions: []string{"pull"}})
-	if err != nil || status != http.StatusOK {
-		return childMeta{}
-	}
-	var m struct {
-		Config *struct {
-			Size   int64  `json:"size"`
-			Digest string `json:"digest"`
-		} `json:"config"`
-		Layers []struct {
-			Size int64 `json:"size"`
-		} `json:"layers"`
-	}
-	if err := json.Unmarshal(body, &m); err != nil {
-		return childMeta{}
-	}
-	out := childMeta{}
-	if m.Config != nil {
-		out.size += m.Config.Size
-	}
-	for _, l := range m.Layers {
-		out.size += l.Size
-	}
-	// Best-effort config-blob fetch for `created`. If it fails, we
-	// still return the size we already computed.
-	if m.Config != nil && m.Config.Digest != "" {
-		cstatus, cbody, _, cerr := s.forward(ctx, http.MethodGet,
-			fmt.Sprintf("/v2/%s/blobs/%s", name, m.Config.Digest),
-			biz.RegistryAccess{Type: "repository", Name: name, Actions: []string{"pull"}})
-		if cerr == nil && cstatus == http.StatusOK {
-			var cfg struct {
-				Created string `json:"created"`
-			}
-			if json.Unmarshal(cbody, &cfg) == nil {
-				out.created = cfg.Created
-			}
-		}
-	}
-	return out
 }
 
 // isAttestationEntry reports whether a manifest-list entry is a

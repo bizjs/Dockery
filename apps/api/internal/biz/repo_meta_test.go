@@ -117,7 +117,8 @@ func newTestUsecase(t *testing.T, repo RepoMetaRepo) *RepoMetaUsecase {
 	if err != nil {
 		t.Fatalf("token issuer: %v", err)
 	}
-	u := NewRepoMetaUsecase(repo, iss, RegistryUpstreamURL("http://127.0.0.1:1"), log.DefaultLogger)
+	fetcher := NewRegistryFetchClient(iss, RegistryUpstreamURL("http://127.0.0.1:1"))
+	u := NewRepoMetaUsecase(repo, fetcher, log.DefaultLogger)
 	t.Cleanup(u.Close)
 	return u
 }

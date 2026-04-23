@@ -3,11 +3,11 @@ package biz
 import (
 	"context"
 	"errors"
-	"net/http"
 	"sync"
 	"time"
 
 	"api/internal/data/ent/schema"
+	"api/internal/util/registryfetch"
 
 	"github.com/go-kratos/kratos/v2/log"
 )
@@ -54,11 +54,9 @@ var ErrRepoMetaNotFound = errors.New("repo_meta: not found")
 // never hammers the upstream registry with concurrent fetches for the
 // same repository.
 type RepoMetaUsecase struct {
-	repo        RepoMetaRepo
-	tokens      *TokenIssuer
-	upstreamURL string
-	client      *http.Client
-	logger      *log.Helper
+	repo     RepoMetaRepo
+	registry *registryfetch.Client
+	logger   *log.Helper
 
 	// Refresh worker plumbing.
 	queue   chan string
@@ -75,16 +73,13 @@ type RepoMetaUsecase struct {
 // model guarantees we never race on the same repo's state.
 func NewRepoMetaUsecase(
 	repo RepoMetaRepo,
-	tokens *TokenIssuer,
-	upstream RegistryUpstreamURL,
+	registry *registryfetch.Client,
 	logger log.Logger,
 ) *RepoMetaUsecase {
 	ctx, cancel := context.WithCancel(context.Background())
 	u := &RepoMetaUsecase{
 		repo:         repo,
-		tokens:       tokens,
-		upstreamURL:  string(upstream),
-		client:       &http.Client{Timeout: 30 * time.Second},
+		registry:     registry,
 		logger:       log.NewHelper(log.With(logger, "module", "biz/repo_meta")),
 		queue:        make(chan string, 256),
 		pending:      make(map[string]struct{}),

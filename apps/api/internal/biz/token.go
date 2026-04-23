@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"api/internal/util/registryfetch"
+
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -59,11 +61,13 @@ func NewTokenIssuer(ks *Keystore, c TokenIssuerConfig) (*TokenIssuer, error) {
 // RegistryAccess is one entry of the JWT "access" claim.
 // Name is the repository (or "catalog"), Type is "repository"/"registry",
 // Actions are the granted operations per the Docker token-auth spec.
-type RegistryAccess struct {
-	Type    string   `json:"type"`
-	Name    string   `json:"name"`
-	Actions []string `json:"actions"`
-}
+//
+// Aliased to registryfetch.Access so the same struct lives in one place
+// — biz emits tokens whose access list is consumed by registry, and
+// util/registryfetch calls that emit tokens for its own outbound
+// requests. A Go type alias preserves interface satisfaction, so
+// *TokenIssuer continues to implement registryfetch.TokenIssuer.
+type RegistryAccess = registryfetch.Access
 
 // registryClaims is the full JWT payload. The extra "access" field is
 // the Docker-registry-specific extension over RFC 7519.

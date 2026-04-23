@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"api/internal/conf"
+	"api/internal/util/registryfetch"
 
 	"github.com/bizjs/kratoscarf/auth/session"
 )
@@ -43,6 +44,14 @@ func NewRegistryUpstreamURL(c *conf.Dockery) RegistryUpstreamURL {
 		u = "http://127.0.0.1:5001"
 	}
 	return RegistryUpstreamURL(u)
+}
+
+// NewRegistryFetchClient wires a *registryfetch.Client for components
+// that need to hit the upstream registry (webhook-driven refresh, UI
+// overview enrichment). Subject is a literal because it only surfaces
+// in the upstream registry's logs for call-site correlation.
+func NewRegistryFetchClient(tokens *TokenIssuer, upstream RegistryUpstreamURL) *registryfetch.Client {
+	return registryfetch.New(tokens, string(upstream), registryfetch.WithSubject("dockery-api"))
 }
 
 // NewReconcilerConfigFromConf derives the reconciler's knobs from yaml.

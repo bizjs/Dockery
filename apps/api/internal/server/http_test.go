@@ -86,7 +86,9 @@ func newHarness(t *testing.T) *harness {
 	gcRunner := biz.NewGCRunner(biz.GCConfig{}, maint, auditUC, logger)
 	// Fake upstream URL — the cache-backed Overview handler doesn't dial
 	// anything, and the reconciler / webhook path is not exercised here.
-	metaUC := biz.NewRepoMetaUsecase(repoMetaRepo, iss, biz.RegistryUpstreamURL("http://127.0.0.1:1"), logger)
+	upstream := biz.RegistryUpstreamURL("http://127.0.0.1:1")
+	fetcher := biz.NewRegistryFetchClient(iss, upstream)
+	metaUC := biz.NewRepoMetaUsecase(repoMetaRepo, fetcher, logger)
 	t.Cleanup(metaUC.Close)
 	whSecret, err := biz.NewWebhookSecret(biz.WebhookSecretConfig{
 		Path: filepath.Join(keyDir, "webhook-secret"),
@@ -100,7 +102,7 @@ func newHarness(t *testing.T) *harness {
 		Auth:       service.NewAuthService(userUC, auditUC),
 		User:       service.NewUserService(userUC, permUC, auditUC),
 		Permission: service.NewPermissionService(permUC, userUC, auditUC),
-		Registry:   service.NewRegistryService(userUC, permUC, iss, auditUC, maint, metaUC, biz.RegistryUpstreamURL("http://127.0.0.1:1")),
+		Registry:   service.NewRegistryService(userUC, permUC, iss, auditUC, maint, metaUC, fetcher, upstream),
 		Token:      service.NewTokenService(userUC, permUC, iss, auditUC),
 		Admin:      service.NewAdminService(auditUC, gcRunner),
 		Webhook:    service.NewWebhookService(whSecret, metaUC),
