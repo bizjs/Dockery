@@ -1,12 +1,10 @@
 /**
- * Catalog Page — dense table view. Repos load first; per-row meta
- * (size / updated / arch) streams in behind via parallel manifest
- * fetches so rows don't block on the slowest repo. Clicking a row
- * navigates to that repo's tag list. Sort is driven by clicking
- * column headers (same pattern as TagTable).
+ * Catalog Page — dense table view backed by /api/registry/overview.
+ * The server-side repo_meta cache is kept in sync by distribution
+ * webhooks + a periodic reconciler, so every interaction (sort,
+ * search, pagination) is a single HTTP call with fully-populated rows.
  */
 
-import { useMemo } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -20,15 +18,11 @@ import {
 import { useNavigate } from 'react-router-dom';
 
 import { useViewModel } from '@/lib/viewmodel';
-import {
-  CatalogViewModel,
-  filterAndSort,
-  type SortField,
-} from './view-model';
+import { CatalogViewModel, type SortField } from './view-model';
 import { SearchBar } from '@/components/common/SearchBar';
 import { formatBinarySize, formatDateTime } from '@/utils';
 import { compactArchLabel, formatPlatform } from '../TagList/platforms';
-import type { ImageInfo } from '@/services/registry.service';
+import type { OverviewItem, OverviewPlatform } from '@/services/registry.service';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -48,20 +42,22 @@ import {
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 
-/** Tiny inline skeleton — avoids pulling in the shadcn Skeleton component. */
-function SkeletonBar({ className }: { className?: string }) {
-  return <div className={`h-3 animate-pulse rounded bg-muted ${className ?? ''}`} />;
-}
-
-function archLabel(meta: ImageInfo): { label: string; title: string } {
-  if (meta.platforms && meta.platforms.length > 0) {
-    return compactArchLabel(meta.platforms);
-  }
-  if (meta.os || meta.architecture) {
-    const s = formatPlatform({ os: meta.os, architecture: meta.architecture });
-    return { label: s, title: s };
+function archLabel(item: OverviewItem): { label: string; title: string } {
+  const platforms = item.platforms ?? [];
+  if (platforms.length > 0) {
+    // compactArchLabel already filters platform.os === 'unknown' (BuildKit
+    // attestations), so we can pass the raw list through.
+    return compactArchLabel(platforms);
   }
   return { label: '-', title: '' };
+}
+
+function singlePlatformLabel(p: OverviewPlatform): string {
+  return formatPlatform({
+    os: p.os,
+    architecture: p.architecture,
+    variant: p.variant,
+  });
 }
 
 export default function Catalog() {
@@ -69,31 +65,8 @@ export default function Catalog() {
   const snapshot = vm.$useSnapshot();
   const navigate = useNavigate();
 
-  // Valtio class getters don't subscribe through $useSnapshot, so
-  // filter + sort runs as a pure derivation in the component.
-  const displayed = useMemo(
-    () =>
-      filterAndSort(
-        snapshot.repositories,
-        snapshot.searchQuery,
-        snapshot.sort,
-        snapshot.sortDirection,
-      ),
-    [snapshot.repositories, snapshot.searchQuery, snapshot.sort, snapshot.sortDirection],
-  );
-
-  const pageCount = useMemo(
-    () => Math.max(1, Math.ceil(displayed.length / snapshot.pageSize)),
-    [displayed.length, snapshot.pageSize],
-  );
-  // Clamp page in case `displayed` shrank (e.g. data arrived late from
-  // meta fetches and filtering now yields fewer rows). VM setters reset
-  // to 0 on filter/sort changes, but this guards the derivation.
+  const pageCount = Math.max(1, Math.ceil(snapshot.total / snapshot.pageSize));
   const currentPage = Math.min(snapshot.page, pageCount - 1);
-  const pagedRepos = useMemo(() => {
-    const start = currentPage * snapshot.pageSize;
-    return displayed.slice(start, start + snapshot.pageSize);
-  }, [displayed, currentPage, snapshot.pageSize]);
 
   const sortIcon = (field: SortField) => {
     if (snapshot.sort !== field) return <ArrowUpDown className="ml-2 h-4 w-4" />;
@@ -130,8 +103,8 @@ export default function Catalog() {
           <h2 className="text-2xl font-bold">Images</h2>
           {!snapshot.loading && (
             <p className="text-sm text-muted-foreground mt-1">
-              {displayed.length}&nbsp;
-              {displayed.length === 1 ? 'image' : 'images'} available
+              {snapshot.total}&nbsp;
+              {snapshot.total === 1 ? 'image' : 'images'} available
             </p>
           )}
         </div>
@@ -179,7 +152,7 @@ export default function Catalog() {
                   </TableCell>
                 </TableRow>
               )}
-              {!snapshot.loading && displayed.length === 0 && (
+              {!snapshot.loading && snapshot.items.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                     {snapshot.searchQuery
@@ -189,9 +162,16 @@ export default function Catalog() {
                 </TableRow>
               )}
               {!snapshot.loading &&
-                pagedRepos.map((r) => {
-                  const meta = r.meta;
-                  const arch = meta ? archLabel(meta) : null;
+                snapshot.items.map((r) => {
+                  const arch =
+                    r.platforms && r.platforms.length > 1
+                      ? archLabel(r as OverviewItem)
+                      : r.platforms && r.platforms.length === 1
+                        ? {
+                            label: singlePlatformLabel(r.platforms[0]),
+                            title: singlePlatformLabel(r.platforms[0]),
+                          }
+                        : { label: '-', title: '' };
                   return (
                     <TableRow
                       key={r.repo}
@@ -206,38 +186,24 @@ export default function Catalog() {
                       </TableCell>
                       <TableCell
                         className="px-4 font-mono text-sm text-muted-foreground truncate"
-                        title={r.latestTag}
+                        title={r.latest_tag}
                       >
-                        {r.latestTag ?? '-'}
+                        {r.latest_tag ?? '-'}
                       </TableCell>
                       <TableCell className="px-4 text-right text-sm text-muted-foreground tabular-nums">
-                        {r.tags.length}
+                        {r.tag_count}
                       </TableCell>
                       <TableCell className="px-4 text-right text-sm text-muted-foreground tabular-nums">
-                        {meta === undefined ? (
-                          <SkeletonBar className="w-16 ml-auto" />
-                        ) : meta ? (
-                          formatBinarySize(meta.size)
-                        ) : (
-                          '-'
-                        )}
+                        {formatBinarySize(r.size)}
                       </TableCell>
                       <TableCell className="px-4 text-sm text-muted-foreground tabular-nums">
-                        {meta === undefined ? (
-                          <SkeletonBar className="w-32" />
-                        ) : (
-                          formatDateTime(meta?.created)
-                        )}
+                        {formatDateTime(r.created)}
                       </TableCell>
                       <TableCell
                         className="px-4 text-sm text-muted-foreground font-mono"
-                        title={arch?.title}
+                        title={arch.title}
                       >
-                        {meta === undefined ? (
-                          <SkeletonBar className="w-28" />
-                        ) : (
-                          arch?.label ?? '-'
-                        )}
+                        {arch.label}
                       </TableCell>
                     </TableRow>
                   );
@@ -247,15 +213,15 @@ export default function Catalog() {
         </div>
       )}
 
-      {!snapshot.loading && !snapshot.error && displayed.length > 0 && (
+      {!snapshot.loading && !snapshot.error && snapshot.total > 0 && (
         <div className="flex items-center justify-between text-sm">
           <div className="text-muted-foreground">
             Showing{' '}
             <span className="font-medium text-foreground">
               {currentPage * snapshot.pageSize + 1}–
-              {Math.min((currentPage + 1) * snapshot.pageSize, displayed.length)}
+              {Math.min((currentPage + 1) * snapshot.pageSize, snapshot.total)}
             </span>{' '}
-            of <span className="font-medium text-foreground">{displayed.length}</span>
+            of <span className="font-medium text-foreground">{snapshot.total}</span>
           </div>
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
