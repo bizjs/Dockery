@@ -118,19 +118,21 @@ func (r *repoMetaRepo) AllRepos(ctx context.Context) ([]string, error) {
 
 // IncrementPull atomically bumps pull_count and sets last_pulled_at.
 // Uses ent's AddPullCount so concurrent pulls don't clobber each other.
-// If the row doesn't exist yet (brand-new repo whose first event was a
-// pull — unusual but possible if reconcile hasn't run), the update is
-// a no-op and the next refresh will populate it.
-func (r *repoMetaRepo) IncrementPull(ctx context.Context, repo string, at time.Time) error {
-	_, err := r.data.DB().RepoMeta.Update().
+// Returns the number of rows affected — 0 means the repo isn't in the
+// cache yet, letting the caller trigger a refresh.
+func (r *repoMetaRepo) IncrementPull(ctx context.Context, repo string, at time.Time) (int, error) {
+	n, err := r.data.DB().RepoMeta.Update().
 		Where(repometa.RepoEQ(repo)).
 		AddPullCount(1).
 		SetLastPulledAt(at).
 		Save(ctx)
-	if err != nil && !ent.IsNotFound(err) {
-		return err
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return 0, nil
+		}
+		return 0, err
 	}
-	return nil
+	return n, nil
 }
 
 // --- conversions ---

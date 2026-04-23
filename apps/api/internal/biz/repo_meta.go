@@ -36,7 +36,11 @@ type RepoMetaRepo interface {
 	Delete(ctx context.Context, repo string) error
 	List(ctx context.Context) ([]*RepoMeta, error)
 	AllRepos(ctx context.Context) ([]string, error)
-	IncrementPull(ctx context.Context, repo string, at time.Time) error
+	// IncrementPull bumps pull_count + last_pulled_at. Returns the
+	// number of rows affected — zero means the repo isn't in cache yet
+	// (never refreshed). Callers decide whether to enqueue a refresh
+	// in that case.
+	IncrementPull(ctx context.Context, repo string, at time.Time) (int, error)
 }
 
 // ErrRepoMetaNotFound is surfaced by Get when the row is missing.
@@ -118,13 +122,20 @@ func (u *RepoMetaUsecase) DeleteRepo(ctx context.Context, repo string) error {
 	return u.repo.Delete(ctx, repo)
 }
 
-// IncrementPull bumps pull_count + last_pulled_at. Best-effort: errors
-// are logged and swallowed because pull events are high-frequency and
-// not worth propagating (a missing pull count is a statistics gap, not
-// a correctness problem).
+// IncrementPull bumps pull_count + last_pulled_at. If the row doesn't
+// exist yet (the repo has only ever been pulled, never pushed during
+// dockery's lifetime), enqueue a refresh so it gets materialized and
+// subsequent pulls start counting. Errors on the counter update are
+// logged + swallowed — pull events are high-frequency and a missing
+// pull count is a statistics gap, not a correctness problem.
 func (u *RepoMetaUsecase) IncrementPull(ctx context.Context, repo string) {
-	if err := u.repo.IncrementPull(ctx, repo, time.Now()); err != nil {
+	n, err := u.repo.IncrementPull(ctx, repo, time.Now())
+	if err != nil {
 		u.logger.Debugf("increment pull %s: %v", repo, err)
+		return
+	}
+	if n == 0 {
+		u.EnqueueRefresh(repo)
 	}
 }
 
@@ -174,11 +185,43 @@ func (u *RepoMetaUsecase) refreshWorker(ctx context.Context) {
 	}
 }
 
+// refreshBackoff holds the short retry schedule for RefreshOne.
+// Brief transient failures (registry restart, momentary network hiccup)
+// resolve within a few seconds — retry before giving up to the
+// 30-minute reconciler. Not exponential-to-infinity on purpose: the
+// reconciler is the real fallback.
+var refreshBackoff = []time.Duration{1 * time.Second, 3 * time.Second}
+
 // RefreshOne synchronously re-fetches `repo`'s meta from upstream and
 // writes it to the cache. Exposed (not just called from the worker) so
 // the reconciler + admin "rebuild-cache" CLI can drive it too. If the
 // repo has zero tags, the cache row is deleted.
+//
+// Upstream fetch errors retry on a short backoff before propagating —
+// decode errors and empty-tag outcomes don't, since they'd just repeat
+// the same failure.
 func (u *RepoMetaUsecase) RefreshOne(ctx context.Context, repo string) error {
+	var lastErr error
+	for attempt := 0; ; attempt++ {
+		err := u.refreshOnce(ctx, repo)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if attempt >= len(refreshBackoff) {
+			return lastErr
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(refreshBackoff[attempt]):
+		}
+	}
+}
+
+// refreshOnce is the single-attempt body of RefreshOne. Split out so
+// the retry loop stays readable.
+func (u *RepoMetaUsecase) refreshOnce(ctx context.Context, repo string) error {
 	tags, err := u.fetchTags(ctx, repo)
 	if err != nil {
 		return err

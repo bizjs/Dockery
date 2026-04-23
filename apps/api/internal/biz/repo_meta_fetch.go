@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 
 	"api/internal/data/ent/schema"
 )
@@ -96,32 +97,51 @@ func (u *RepoMetaUsecase) fetchRepoMeta(ctx context.Context, repo, tag string) (
 	out := &RepoMeta{}
 
 	if isManifestList(manifest) {
-		// Walk each child manifest in parallel-friendly sequential mode
-		// (goroutines would require yet another sync layer for 2-3
-		// platforms — not worth it). The total size + latest created
-		// across runnable children become the repo-level values.
-		var total int64
-		var latestCreated string
-		platforms := make([]schema.PlatformInfo, 0, len(manifest.Manifests))
-		for _, entry := range manifest.Manifests {
-			platforms = append(platforms, schema.PlatformInfo{
+		// Children are fetched in parallel — concurrent round-trips
+		// against the loopback registry are cheap and give a linear
+		// speed-up on 3+ platform images. Results are written into
+		// per-index slots so the order matches `manifest.Manifests`
+		// without a shared mutex.
+		entries := manifest.Manifests
+		platforms := make([]schema.PlatformInfo, len(entries))
+		type childResult struct {
+			size    int64
+			created string
+		}
+		results := make([]childResult, len(entries))
+
+		var wg sync.WaitGroup
+		for i := range entries {
+			entry := entries[i]
+			platforms[i] = schema.PlatformInfo{
 				Os:           entry.Platform.Os,
 				Architecture: entry.Platform.Architecture,
 				Variant:      entry.Platform.Variant,
-			})
+			}
 			if entry.Digest == "" {
 				continue
 			}
-			size, created := u.fetchChildMeta(ctx, repo, entry.Digest)
-			total += size
+			wg.Add(1)
+			go func(idx int, digest string) {
+				defer wg.Done()
+				size, created := u.fetchChildMeta(ctx, repo, digest)
+				results[idx] = childResult{size: size, created: created}
+			}(i, entry.Digest)
+		}
+		wg.Wait()
+
+		var total int64
+		var latestCreated string
+		for i, r := range results {
+			total += r.size
 			// Skip attestation manifests (unknown/unknown) from the
 			// `created` max — their config timestamp is the generator's
 			// time, not a real image build.
-			if entry.Platform.Os == "unknown" {
+			if entries[i].Platform.Os == "unknown" {
 				continue
 			}
-			if created != "" && created > latestCreated {
-				latestCreated = created
+			if r.created != "" && r.created > latestCreated {
+				latestCreated = r.created
 			}
 		}
 		out.Size = total

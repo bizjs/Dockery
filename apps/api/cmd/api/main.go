@@ -47,6 +47,7 @@ func newApp(
 	logger log.Logger,
 	hs *http.Server,
 	users *biz.UserUsecase,
+	meta *biz.RepoMetaUsecase,
 	reconciler *biz.Reconciler,
 	dockery *conf.Dockery,
 ) *kratos.App {
@@ -82,6 +83,14 @@ func newApp(
 		kratos.Metadata(map[string]string{}),
 		kratos.Logger(logger),
 		kratos.Server(hs),
+		// Drain the background goroutines on shutdown. Reconciler first
+		// so it doesn't enqueue new refreshes while the usecase worker
+		// is draining.
+		kratos.AfterStop(func(context.Context) error {
+			reconciler.Stop()
+			meta.Close()
+			return nil
+		}),
 	)
 }
 
