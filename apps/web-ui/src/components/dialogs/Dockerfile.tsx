@@ -1,6 +1,8 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Copy } from 'lucide-react';
+import { copyText } from '@bizjs/biz-utils';
+import { toast } from 'sonner';
 
 interface DockerfileProps {
   open: boolean;
@@ -11,9 +13,14 @@ interface DockerfileProps {
 export function Dockerfile({ open, onOpenChange, content = '' }: DockerfileProps) {
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(content);
+      // biz-utils falls back to the `document.execCommand('copy')`
+      // path when navigator.clipboard is unavailable — relevant here
+      // because Dockery ships on plain HTTP localhost:5001 by default
+      // and the Clipboard API is gated behind secure contexts.
+      await copyText(content);
+      toast.success('Dockerfile copied');
     } catch {
-      // Ignore copy errors
+      toast.error('Copy failed');
     }
   };
 

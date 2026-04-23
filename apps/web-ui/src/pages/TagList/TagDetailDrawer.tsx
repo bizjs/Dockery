@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { formatBinarySize } from '@/utils';
 import { Copy, Check, X } from 'lucide-react';
 import { useState } from 'react';
+import { copyText } from '@bizjs/biz-utils';
 import { toast } from 'sonner';
 import type { ImageInfo } from '@/services/registry.service';
 import { formatPlatform } from './platforms';
@@ -26,11 +27,17 @@ export function TagDetailDrawer({ open, onClose, tagInfo, imageName }: TagDetail
     return null;
   }
 
-  const copyToClipboard = (text: string, fieldName: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedField(fieldName);
-    toast.success(`${fieldName} copied to clipboard!`);
-    setTimeout(() => setCopiedField(null), 2000);
+  const copyToClipboard = async (text: string, fieldName: string) => {
+    // biz-utils handles the HTTP-localhost fallback — plain
+    // navigator.clipboard is blocked outside secure contexts.
+    try {
+      await copyText(text);
+      setCopiedField(fieldName);
+      toast.success(`${fieldName} copied to clipboard!`);
+      setTimeout(() => setCopiedField(null), 2000);
+    } catch {
+      toast.error(`Failed to copy ${fieldName}`);
+    }
   };
 
   const pullCommand = `docker pull ${imageName}:${tagInfo.tag}`;
