@@ -55,7 +55,7 @@ func newGCTestHarness(t *testing.T, run runner) (*GCRunner, *Maintenance, *fakeA
 		ServiceName:      "registry",
 		DeleteUntagged:   true,
 		Timeout:          5 * time.Second,
-	}, mode, uc, log.NewStdLogger(discard{}), run)
+	}, mode, uc, nil, nil, log.NewStdLogger(discard{}), run)
 	return r, mode, audit
 }
 
@@ -63,6 +63,57 @@ func newGCTestHarness(t *testing.T, run runner) (*GCRunner, *Maintenance, *fakeA
 type discard struct{}
 
 func (discard) Write(p []byte) (int, error) { return len(p), nil }
+
+// newGCResyncHarness wires a GCRunner with real RepoMetaUsecase +
+// Reconciler so we can assert the post-GC cache resync fires. Uses
+// fake upstream /v2/_catalog and an in-memory repo_meta backend.
+func newGCResyncHarness(t *testing.T, upstreamURL string, cached []string, run runner) (*GCRunner, *fakeAuditRepo, *fakeRepoMetaRepo, *RepoMetaUsecase) {
+	t.Helper()
+
+	audit := &fakeAuditRepo{}
+	uc := NewAuditUsecase(audit, log.NewStdLogger(discard{}))
+
+	ks, err := NewKeystore(KeystoreConfig{
+		PrivatePath: filepath.Join(t.TempDir(), "priv.pem"),
+		JWKSPath:    filepath.Join(t.TempDir(), "jwks.json"),
+	})
+	if err != nil {
+		t.Fatalf("keystore: %v", err)
+	}
+	iss, err := NewTokenIssuer(ks, TokenIssuerConfig{
+		Issuer: "dockery-api", Audience: "dockery", TTL: 5 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("token issuer: %v", err)
+	}
+
+	repo := newFakeRepoMetaRepo()
+	for _, r := range cached {
+		repo.rows[r] = &RepoMeta{Repo: r}
+	}
+	// Refresh worker points at an unreachable upstream — the refresh
+	// attempts fail quickly with retries, enough for us to see the
+	// "queued" side effect without side effects escaping the test.
+	metaFetcher := NewRegistryFetchClient(iss, RegistryUpstreamURL("http://127.0.0.1:1"))
+	metaUC := NewRepoMetaUsecase(repo, metaFetcher, log.NewStdLogger(discard{}))
+	t.Cleanup(metaUC.Close)
+
+	// Reconciler sees the fake upstream catalog.
+	reconFetcher := NewRegistryFetchClient(iss, RegistryUpstreamURL(upstreamURL))
+	reconciler := NewReconciler(metaUC, reconFetcher, uc,
+		ReconcilerConfig{Interval: time.Hour}, log.NewStdLogger(discard{}))
+
+	gc := newGCRunnerWithRunner(GCConfig{
+		SupervisorctlBin: "/bin/supervisorctl",
+		SupervisordConf:  "/etc/supervisord.conf",
+		RegistryBin:      "/bin/registry",
+		RegistryConf:     "/etc/docker/registry/config.yml",
+		ServiceName:      "registry",
+		DeleteUntagged:   true,
+		Timeout:          5 * time.Second,
+	}, NewMaintenance(), uc, metaUC, reconciler, log.NewStdLogger(discard{}), run)
+	return gc, audit, repo, metaUC
+}
 
 func TestGCRun_HappyPath(t *testing.T) {
 	var calls []string
@@ -242,7 +293,7 @@ func TestPruneEmptyRepos_RemovesEmptyAndKeepsTagged(t *testing.T) {
 	r := newGCRunnerWithRunner(GCConfig{
 		RegistryRootDir: root,
 		PruneEmptyRepos: true,
-	}, NewMaintenance(), NewAuditUsecase(&fakeAuditRepo{}, log.NewStdLogger(discard{})),
+	}, NewMaintenance(), NewAuditUsecase(&fakeAuditRepo{}, log.NewStdLogger(discard{})), nil, nil,
 		log.NewStdLogger(discard{}), func(context.Context, string, ...string) (string, error) { return "", nil })
 
 	pruned, err := r.pruneEmptyRepos()
@@ -286,7 +337,7 @@ func TestPruneEmptyRepos_MissingRootIsNoOp(t *testing.T) {
 	r := newGCRunnerWithRunner(GCConfig{
 		RegistryRootDir: filepath.Join(t.TempDir(), "nonexistent"),
 		PruneEmptyRepos: true,
-	}, NewMaintenance(), NewAuditUsecase(&fakeAuditRepo{}, log.NewStdLogger(discard{})),
+	}, NewMaintenance(), NewAuditUsecase(&fakeAuditRepo{}, log.NewStdLogger(discard{})), nil, nil,
 		log.NewStdLogger(discard{}), func(context.Context, string, ...string) (string, error) { return "", nil })
 
 	pruned, err := r.pruneEmptyRepos()
@@ -318,6 +369,71 @@ func TestGCRun_StopFailureShortCircuits(t *testing.T) {
 	for _, c := range calls {
 		if strings.Contains(c, "garbage-collect") {
 			t.Fatalf("garbage-collect should not run after stop failure, calls: %v", calls)
+		}
+	}
+}
+
+func TestGCRun_PostGCCacheResync(t *testing.T) {
+	// GC doesn't emit webhook events (offline operation on the
+	// filesystem). The runner must reconcile the cache against upstream
+	// after success so orphan rows are dropped and stale rows are
+	// re-enqueued for refresh.
+	//
+	// Setup:
+	//   upstream /v2/_catalog has:      {alice/app}
+	//   cache starts with:              {alice/app, zombie/gone}
+	// Expected after GC success:
+	//   - zombie/gone deleted (upstream ∖ cache)
+	//   - alice/app enqueued for refresh (still present → size may have shrunk)
+	//   - audit log includes ActionCacheResynced
+	upstream := fakeCatalogServer(t, []string{"alice/app"})
+	t.Cleanup(upstream.Close)
+
+	gc, audit, repo, metaUC := newGCResyncHarness(t, upstream.URL,
+		[]string{"alice/app", "zombie/gone"},
+		func(_ context.Context, _ string, _ ...string) (string, error) {
+			return "", nil // pretend stop/gc/start succeed
+		})
+
+	// Freeze the refresh worker so the enqueued item stays in the
+	// queue and we can count it deterministically.
+	metaUC.Close()
+
+	if _, err := gc.Run(context.Background(), "alice", "127.0.0.1"); err != nil {
+		t.Fatalf("gc run: %v", err)
+	}
+
+	// zombie/gone should be gone from the cache.
+	repo.mu.Lock()
+	_, zombieStill := repo.rows["zombie/gone"]
+	_, aliceStill := repo.rows["alice/app"]
+	repo.mu.Unlock()
+	if zombieStill {
+		t.Error("zombie/gone should have been deleted by post-gc reconcile")
+	}
+	if !aliceStill {
+		t.Error("alice/app should still be cached after reconcile")
+	}
+
+	// alice/app should have been enqueued for refresh.
+	if queued := drainQueue(metaUC); len(queued) != 1 || queued[0] != "alice/app" {
+		t.Errorf("refresh queue = %v, want [alice/app]", queued)
+	}
+
+	// Audit should have gc.started → gc.completed → registry.reconcile.removed (zombie) → registry.cache.resynced.
+	acts := audit.actions()
+	want := []string{
+		ActionGCStarted,
+		ActionGCCompleted,
+		ActionReconcileRemoved,
+		ActionCacheResynced,
+	}
+	if len(acts) != len(want) {
+		t.Fatalf("audit actions = %v, want %v", acts, want)
+	}
+	for i, a := range acts {
+		if a != want[i] {
+			t.Errorf("audit[%d] = %q, want %q", i, a, want[i])
 		}
 	}
 }

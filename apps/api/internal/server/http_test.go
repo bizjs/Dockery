@@ -83,7 +83,7 @@ func newHarness(t *testing.T) *harness {
 	maint := biz.NewMaintenance()
 	// Use a no-op GC runner in tests — the endpoint isn't exercised here
 	// and we don't want to actually shell out to supervisorctl.
-	gcRunner := biz.NewGCRunner(biz.GCConfig{}, maint, auditUC, logger)
+	gcRunner := biz.NewGCRunner(biz.GCConfig{}, maint, auditUC, nil, nil, logger)
 	// Fake upstream URL — the cache-backed Overview handler doesn't dial
 	// anything, and the reconciler / webhook path is not exercised here.
 	upstream := biz.RegistryUpstreamURL("http://127.0.0.1:1")

@@ -25,6 +25,7 @@ const (
 	ActionImageDeleted        = "image.deleted"
 	ActionGCStarted           = "gc.started"
 	ActionGCCompleted         = "gc.completed"
+	ActionCacheResynced       = "registry.cache.resynced"
 	ActionKeyRotated          = "key.rotated"
 	// Reconciler discrepancies — triggered when the repo_meta cache
 	// drifts from upstream /v2/_catalog (missed webhook event, etc.).

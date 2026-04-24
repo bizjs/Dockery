@@ -77,13 +77,16 @@ func defaultRunner(ctx context.Context, name string, args ...string) (string, er
 }
 
 // GCRunner orchestrates: set maintenance flag → stop registry →
-// `registry garbage-collect` → start registry → clear flag.
+// `registry garbage-collect` → start registry → clear flag →
+// resync the repo_meta cache.
 // At most one run at a time (single-flight via mu.TryLock).
 type GCRunner struct {
-	cfg   GCConfig
-	mode  *Maintenance
-	audit *AuditUsecase
-	log   *log.Helper
+	cfg        GCConfig
+	mode       *Maintenance
+	audit      *AuditUsecase
+	meta       *RepoMetaUsecase
+	reconciler *Reconciler
+	log        *log.Helper
 
 	run runner     // swappable for tests
 	mu  sync.Mutex // single-flight lock
@@ -91,20 +94,22 @@ type GCRunner struct {
 
 // NewGCRunner constructs a runner with default exec behaviour. Tests
 // should instead use newGCRunnerWithRunner to inject a fake.
-func NewGCRunner(cfg GCConfig, mode *Maintenance, audit *AuditUsecase, logger log.Logger) *GCRunner {
-	return newGCRunnerWithRunner(cfg, mode, audit, logger, defaultRunner)
+func NewGCRunner(cfg GCConfig, mode *Maintenance, audit *AuditUsecase, meta *RepoMetaUsecase, reconciler *Reconciler, logger log.Logger) *GCRunner {
+	return newGCRunnerWithRunner(cfg, mode, audit, meta, reconciler, logger, defaultRunner)
 }
 
-func newGCRunnerWithRunner(cfg GCConfig, mode *Maintenance, audit *AuditUsecase, logger log.Logger, run runner) *GCRunner {
+func newGCRunnerWithRunner(cfg GCConfig, mode *Maintenance, audit *AuditUsecase, meta *RepoMetaUsecase, reconciler *Reconciler, logger log.Logger, run runner) *GCRunner {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 30 * time.Minute
 	}
 	return &GCRunner{
-		cfg:   cfg,
-		mode:  mode,
-		audit: audit,
-		log:   log.NewHelper(log.With(logger, "module", "biz/gc")),
-		run:   run,
+		cfg:        cfg,
+		mode:       mode,
+		audit:      audit,
+		meta:       meta,
+		reconciler: reconciler,
+		log:        log.NewHelper(log.With(logger, "module", "biz/gc")),
+		run:        run,
 	}
 }
 
@@ -159,7 +164,41 @@ func (r *GCRunner) Run(ctx context.Context, actor, clientIP string) (*GCResult, 
 	if err != nil {
 		return result, err
 	}
+	// GC bypasses the HTTP API so distribution never emits
+	// push/delete webhooks for blobs/repos it sweeps. Re-sync the
+	// cache explicitly:
+	//   1. ReconcileOnce diffs /v2/_catalog → deletes rows for repos
+	//      that vanished entirely;
+	//   2. EnqueueRefresh for every remaining cached repo → the
+	//      refresh worker updates size/tag_count for those whose
+	//      blobs shrank but that still have tags.
+	r.resyncCache(runCtx, actor, clientIP)
 	return result, nil
+}
+
+// resyncCache is the post-GC cache reconcile. Idempotent and
+// best-effort — any error is logged but doesn't fail the GC response,
+// because the user's real action (GC) already succeeded. The next
+// periodic reconcile will catch anything this missed.
+func (r *GCRunner) resyncCache(ctx context.Context, actor, clientIP string) {
+	if r.reconciler == nil || r.meta == nil {
+		return
+	}
+	r.reconciler.ReconcileOnce(ctx)
+	repos, err := r.meta.AllRepos(ctx)
+	if err != nil {
+		r.log.Warnf("post-gc cache resync: list repos: %v", err)
+	}
+	for _, repo := range repos {
+		r.meta.EnqueueRefresh(repo)
+	}
+	r.audit.Write(ctx, AuditEntry{
+		Actor:    actor,
+		Action:   ActionCacheResynced,
+		ClientIP: clientIP,
+		Success:  true,
+		Detail:   map[string]any{"reason": "post-gc", "enqueued": len(repos)},
+	})
 }
 
 // doRun is the stop / GC / prune / restart sequence. The restart is
