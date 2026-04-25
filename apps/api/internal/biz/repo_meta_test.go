@@ -234,6 +234,35 @@ func TestClose_Idempotent(t *testing.T) {
 	u.Close()
 }
 
+func TestPickRepresentativeTag(t *testing.T) {
+	cases := []struct {
+		name string
+		tags []string
+		want string
+	}{
+		{"empty", nil, ""},
+		{"latest wins", []string{"v1.0.0", "latest", "v2.0.0"}, "latest"},
+		// The bug we're fixing: lexicographic sort puts v0.0.10 before
+		// v0.0.9 (because '1' < '9'), so the old code picked v0.0.9.
+		{"semver beats lex", []string{"v0.0.9", "v0.0.10"}, "v0.0.10"},
+		{"semver many", []string{"v1.2.3", "v1.10.0", "v1.2.10"}, "v1.10.0"},
+		{"semver no v prefix", []string{"0.0.9", "0.0.10"}, "0.0.10"},
+		{"semver with prerelease", []string{"v1.0.0-rc.1", "v1.0.0", "v1.0.0-rc.2"}, "v1.0.0"},
+		// Non-semver tags fall back to lex max.
+		{"non semver fallback", []string{"main", "dev", "staging"}, "staging"},
+		// Mixed: any valid semver wins over non-semver lex max.
+		{"mixed semver wins", []string{"main", "v1.0.0", "abandoned-branch"}, "v1.0.0"},
+		{"single tag", []string{"hello"}, "hello"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := pickRepresentativeTag(c.tags); got != c.want {
+				t.Errorf("pickRepresentativeTag(%v) = %q, want %q", c.tags, got, c.want)
+			}
+		})
+	}
+}
+
 // TestRefreshWorker_DrainsQueue shows that the background worker pulls
 // items off the queue and invokes RefreshOne, which (with an unreachable
 // upstream) fails but still removes the item from `pending` so a future
