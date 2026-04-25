@@ -42,8 +42,12 @@ export class CatalogViewModel extends BaseViewModel<ViewState> implements ViewMo
       items: [],
       total: 0,
       searchQuery: '',
-      sort: 'name',
-      sortDirection: 'asc',
+      // Default to newest-first so the page opens on the activity
+      // operators care about — recently pushed images sit at the top.
+      // Switching columns reverts to each column's natural direction
+      // (see toggleSort).
+      sort: 'updated',
+      sortDirection: 'desc',
       page: 0,
       pageSize: 50,
       loading: true,
