@@ -5,6 +5,7 @@
 
 import { BaseViewModel, type ViewModelLifecycle } from '@/lib/viewmodel/BaseViewModel';
 import { listImageTags, deleteImageTag, type ImageInfo } from '@/services/registry.service';
+import { compareTags } from './sort';
 
 type SortField = 'tag' | 'size' | 'created';
 type SortDirection = 'asc' | 'desc';
@@ -41,7 +42,11 @@ export class TagListViewModel extends BaseViewModel<ViewState> implements ViewMo
       tagList: [],
       loading: true,
       error: null,
-      sortField: null,
+      // Default to version-newest-first so the page opens on the
+      // tags users typically care about. localeCompare with
+      // `numeric: true` keeps `v0.0.10` after `v0.0.9` (natural sort)
+      // — same intent as the backend's pickRepresentativeTag fix.
+      sortField: 'tag',
       sortDirection: 'desc',
       selectedTag: null,
       isDrawerOpen: false,
@@ -77,6 +82,10 @@ export class TagListViewModel extends BaseViewModel<ViewState> implements ViewMo
         selectedTags: [],
         lastSelectedTag: null,
       });
+      // Apply the default sort to the freshly-loaded list — distribution
+      // doesn't guarantee an order, and even when it returns ASCII-lex
+      // we want version-aware ordering (`v0.0.10` after `v0.0.9`).
+      this.sortTagList();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch tags';
       this.$updateState({ error: errorMessage, loading: false });
@@ -107,8 +116,10 @@ export class TagListViewModel extends BaseViewModel<ViewState> implements ViewMo
       let cmp = 0;
       switch (sortField) {
         case 'tag':
-          // numeric: true → v10 sorts after v2 (natural order for version tags).
-          cmp = a.tag.localeCompare(b.tag, undefined, { numeric: true, sensitivity: 'base' });
+          // Strict semver via `compareTags`: handles prereleases
+          // correctly (v1.0.0-rc.1 < v1.0.0) and falls back to natural
+          // order for tags that aren't semver (latest, dev, dates).
+          cmp = compareTags(a.tag, b.tag);
           break;
         case 'size':
           cmp = a.size - b.size;
