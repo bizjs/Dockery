@@ -77,15 +77,15 @@ describe('CatalogViewModel', () => {
   describe('toggleSort', () => {
     it('flips direction when clicking the active column', async () => {
       const vm = await newVM();
-      // Default is { sort: 'name', direction: 'asc' }.
-      expect(vm.state.sort).toBe('name');
-      expect(vm.state.sortDirection).toBe('asc');
-
-      vm.toggleSort('name');
+      // Default is { sort: 'updated', direction: 'desc' } — newest first.
+      expect(vm.state.sort).toBe('updated');
       expect(vm.state.sortDirection).toBe('desc');
 
-      vm.toggleSort('name');
+      vm.toggleSort('updated');
       expect(vm.state.sortDirection).toBe('asc');
+
+      vm.toggleSort('updated');
+      expect(vm.state.sortDirection).toBe('desc');
     });
 
     it('switches to column-appropriate default direction when changing columns', async () => {
