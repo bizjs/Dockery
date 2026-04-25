@@ -2,6 +2,13 @@
 
 本文件记录 Dockery 的所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.7.2] - 2026-04-25
+
+### 新增
+
+- **catalog**: default sort to newest-first (updated desc)
+
+
 ## [0.7.1] - 2026-04-24
 
 ### 新增
