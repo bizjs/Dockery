@@ -3,6 +3,7 @@ package biz
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"api/internal/util/registryfetch"
 
 	"github.com/go-kratos/kratos/v2/log"
+	"golang.org/x/mod/semver"
 )
 
 // RepoMeta is the biz-layer view of the denormalized per-repository
@@ -309,15 +311,56 @@ func (u *RepoMetaUsecase) refreshOnce(ctx context.Context, repo string) error {
 	return u.repo.Upsert(ctx, meta)
 }
 
-// pickRepresentativeTag is the same heuristic the UI used: prefer
-// "latest" if present, otherwise take the lexicographically last tag.
-// Registry doesn't expose push time so this is the best we can do
-// without a full per-tag manifest scan.
+// pickRepresentativeTag chooses which tag's manifest the cache row
+// represents. Registry doesn't expose push time, so we layer three
+// heuristics in order of confidence:
+//
+//  1. `latest` if present — explicit operator intent.
+//  2. The highest semver tag if any tags parse as semver. Uses
+//     golang.org/x/mod/semver so v0.0.10 correctly orders after v0.0.9
+//     (lexicographic alone gets this wrong because '1' < '9'). Tags
+//     without the leading 'v' are accepted by normalising before
+//     comparison; the original tag string is what we return.
+//  3. Lexicographic max as a last resort for non-semver schemes
+//     (date-prefixed builds, branch-named tags). Imperfect for
+//     numeric date schemes, but matches the previous behaviour.
 func pickRepresentativeTag(tags []string) string {
+	if len(tags) == 0 {
+		return ""
+	}
 	for _, t := range tags {
 		if t == "latest" {
 			return "latest"
 		}
 	}
-	return tags[len(tags)-1]
+
+	// Semver pass — track both the canonical (v-prefixed) form for
+	// comparison and the original tag string for the return value.
+	var bestTag, bestSemver string
+	for _, t := range tags {
+		canon := t
+		if !strings.HasPrefix(canon, "v") {
+			canon = "v" + canon
+		}
+		if !semver.IsValid(canon) {
+			continue
+		}
+		if bestSemver == "" || semver.Compare(canon, bestSemver) > 0 {
+			bestSemver = canon
+			bestTag = t
+		}
+	}
+	if bestTag != "" {
+		return bestTag
+	}
+
+	// Fallback: linear scan for the lexicographic max so we don't
+	// mutate the caller's slice via sort.Strings.
+	max := tags[0]
+	for _, t := range tags[1:] {
+		if t > max {
+			max = t
+		}
+	}
+	return max
 }
