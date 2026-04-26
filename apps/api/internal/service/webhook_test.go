@@ -65,7 +65,7 @@ func newWebhookRig(t *testing.T) (baseURL string, secret string, stub *stubRefre
 		t.Fatalf("webhook secret: %v", err)
 	}
 	stub = &stubRefresher{}
-	svc := &WebhookService{secret: ws, meta: stub}
+	svc := &WebhookService{secret: ws, meta: stub, seen: newSeenEvents(seenEventCap)}
 
 	// Minimal kratos HTTP server: no session middleware, no CORS, no
 	// filters — the webhook route is meant to be reached only through
@@ -290,6 +290,81 @@ func TestWebhook_EmptyRepo_Skipped(t *testing.T) {
 	refreshed, pulled := stub.snapshot()
 	if len(refreshed) != 0 || len(pulled) != 0 {
 		t.Errorf("empty repo must be skipped; got refreshed=%v pulled=%v", refreshed, pulled)
+	}
+}
+
+func TestWebhook_DuplicateEventID_SkippedOnReplay(t *testing.T) {
+	// Distribution retries delivery on transport failures (5xx, timeout),
+	// so the same event ID can land twice. Push/delete replays would
+	// waste upstream refreshes; pull replays would double-count. Both
+	// must be suppressed by the seen-events cache.
+	baseURL, secret, stub := newWebhookRig(t)
+
+	pushEvent := map[string]any{
+		"id":     "evt-push-1",
+		"action": "push",
+		"target": map[string]any{
+			"mediaType":  "application/vnd.oci.image.manifest.v1+json",
+			"repository": "alice/app",
+		},
+	}
+	pullEvent := map[string]any{
+		"id":     "evt-pull-1",
+		"action": "pull",
+		"target": map[string]any{
+			"mediaType":  "application/vnd.oci.image.manifest.v1+json",
+			"repository": "alice/app",
+		},
+	}
+
+	// First delivery: both fire.
+	resp := postEvents(t, baseURL, secret, map[string]any{
+		"events": []any{pushEvent, pullEvent},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("first delivery status = %d, want 200", resp.StatusCode)
+	}
+
+	// Replay of the same envelope: handler must drop both events.
+	resp = postEvents(t, baseURL, secret, map[string]any{
+		"events": []any{pushEvent, pullEvent},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("replay status = %d, want 200", resp.StatusCode)
+	}
+
+	refreshed, pulled := stub.snapshot()
+	if len(refreshed) != 1 || refreshed[0] != "alice/app" {
+		t.Errorf("refresh fired %v times after replay; want exactly one alice/app", refreshed)
+	}
+	if len(pulled) != 1 || pulled[0] != "alice/app" {
+		t.Errorf("pull fired %v times after replay; want exactly one alice/app", pulled)
+	}
+}
+
+func TestWebhook_NoEventID_StillProcessed(t *testing.T) {
+	// Older distribution builds may emit events without an `id`. We must
+	// still process them — dedup is a best-effort optimization, not a
+	// gate on functionality.
+	baseURL, secret, stub := newWebhookRig(t)
+	resp := postEvents(t, baseURL, secret, map[string]any{
+		"events": []any{
+			map[string]any{
+				// No "id" field.
+				"action": "push",
+				"target": map[string]any{
+					"mediaType":  "application/vnd.oci.image.manifest.v1+json",
+					"repository": "alice/app",
+				},
+			},
+		},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	refreshed, _ := stub.snapshot()
+	if len(refreshed) != 1 || refreshed[0] != "alice/app" {
+		t.Errorf("refreshed = %v, want [alice/app]", refreshed)
 	}
 }
 

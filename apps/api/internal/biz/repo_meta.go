@@ -104,13 +104,20 @@ var ErrRepoMetaNotFound = errors.New("repo_meta: not found")
 // funnel into the single deduplicated refresh worker so the backend
 // never hammers the upstream registry with concurrent fetches for the
 // same repository.
+//
+// Pending-set design: `pending` is the source of truth for "what needs
+// a refresh", and `signal` is a capacity-1 wake-up channel. Enqueues
+// just add to the set and poke the signal; the worker drains the set on
+// every wake-up. There is no per-item channel buffer, so an enqueue
+// burst can never overflow and lose work — the bound is the number of
+// distinct repos in the registry, which is what we want.
 type RepoMetaUsecase struct {
 	repo     RepoMetaRepo
 	registry *registryfetch.Client
 	logger   *log.Helper
 
 	// Refresh worker plumbing.
-	queue   chan string
+	signal  chan struct{}
 	mu      sync.Mutex
 	pending map[string]struct{}
 	// workerCancel stops the background worker; bound to the usecase's
@@ -132,7 +139,7 @@ func NewRepoMetaUsecase(
 		repo:         repo,
 		registry:     registry,
 		logger:       log.NewHelper(log.With(logger, "module", "biz/repo_meta")),
-		queue:        make(chan string, 256),
+		signal:       make(chan struct{}, 1),
 		pending:      make(map[string]struct{}),
 		workerCancel: cancel,
 	}
@@ -213,23 +220,19 @@ func (u *RepoMetaUsecase) EnqueueRefresh(repo string) {
 		return
 	}
 	u.mu.Lock()
-	if _, already := u.pending[repo]; already {
-		u.mu.Unlock()
-		return
-	}
+	_, already := u.pending[repo]
 	u.pending[repo] = struct{}{}
 	u.mu.Unlock()
-
+	if already {
+		// Already on the worker's todo list; no need to re-poke.
+		return
+	}
+	// Non-blocking poke: signal has capacity 1 so a coalesced burst of
+	// wake-ups collapses into a single iteration of the worker, which
+	// drains everything currently in `pending`.
 	select {
-	case u.queue <- repo:
+	case u.signal <- struct{}{}:
 	default:
-		// Queue at capacity — drop the pending marker so a future
-		// enqueue retries. Losing one refresh event is fine; the
-		// reconciler will pick up the drift within 30 min.
-		u.mu.Lock()
-		delete(u.pending, repo)
-		u.mu.Unlock()
-		u.logger.Warnf("refresh queue full, dropping: %s", repo)
 	}
 }
 
@@ -238,10 +241,30 @@ func (u *RepoMetaUsecase) refreshWorker(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case repo := <-u.queue:
+		case <-u.signal:
+		}
+		// Drain the pending set. Pop one repo at a time under the lock,
+		// release the lock for the network call, then loop. New
+		// EnqueueRefresh calls during the network call land in `pending`
+		// and we'll see them on the next iteration without needing
+		// another wake-up.
+		for {
+			if ctx.Err() != nil {
+				return
+			}
 			u.mu.Lock()
+			var repo string
+			for r := range u.pending {
+				repo = r
+				break
+			}
+			if repo == "" {
+				u.mu.Unlock()
+				break
+			}
 			delete(u.pending, repo)
 			u.mu.Unlock()
+
 			if err := u.RefreshOne(ctx, repo); err != nil {
 				u.logger.Warnf("refresh %s: %v", repo, err)
 			}

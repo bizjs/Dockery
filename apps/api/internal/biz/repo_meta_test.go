@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -145,18 +146,16 @@ func TestEnqueueRefresh_Dedup(t *testing.T) {
 	repo := newFakeRepoMetaRepo()
 	u := newTestUsecase(t, repo)
 
-	// Stop the worker so we can inspect the queue without races. The
-	// worker is already started by NewRepoMetaUsecase — immediately
-	// close to freeze.
+	// Stop the worker so we can inspect state without races. The worker
+	// is already started by NewRepoMetaUsecase — immediately close to
+	// freeze.
 	u.Close()
 
 	for i := 0; i < 20; i++ {
 		u.EnqueueRefresh("alice/app")
 	}
-	// The queue length reflects items waiting for the worker; since
-	// the worker is stopped we can read it directly.
-	if got := len(u.queue); got != 1 {
-		t.Errorf("queue length = %d after 20 enqueues of same repo, want 1", got)
+	if got := pendingLen(u); got != 1 {
+		t.Errorf("pending length = %d after 20 enqueues of same repo, want 1", got)
 	}
 }
 
@@ -168,8 +167,8 @@ func TestEnqueueRefresh_DifferentRepos(t *testing.T) {
 	for _, r := range []string{"a", "b", "c", "a", "b"} {
 		u.EnqueueRefresh(r)
 	}
-	if got := len(u.queue); got != 3 {
-		t.Errorf("queue length = %d, want 3 (distinct a/b/c)", got)
+	if got := pendingLen(u); got != 3 {
+		t.Errorf("pending length = %d, want 3 (distinct a/b/c)", got)
 	}
 }
 
@@ -179,9 +178,36 @@ func TestEnqueueRefresh_EmptyRepoIgnored(t *testing.T) {
 	u.Close()
 
 	u.EnqueueRefresh("")
-	if got := len(u.queue); got != 0 {
-		t.Errorf("empty repo must be ignored; queue=%d", got)
+	if got := pendingLen(u); got != 0 {
+		t.Errorf("empty repo must be ignored; pending=%d", got)
 	}
+}
+
+// TestEnqueueRefresh_HighBurstNoLoss verifies the pending-set design
+// scales beyond the old 256-slot channel cap. Pre-pending-set design
+// would silently drop the 257th repo; with pending=truth, every distinct
+// repo lands in the set regardless of how fast they arrive.
+func TestEnqueueRefresh_HighBurstNoLoss(t *testing.T) {
+	repo := newFakeRepoMetaRepo()
+	u := newTestUsecase(t, repo)
+	u.Close()
+
+	const N = 2000
+	for i := 0; i < N; i++ {
+		u.EnqueueRefresh(fmt.Sprintf("repo/%d", i))
+	}
+	if got := pendingLen(u); got != N {
+		t.Errorf("pending length = %d after %d distinct enqueues, want %d", got, N, N)
+	}
+}
+
+// pendingLen reads u.pending under the lock so the test never races
+// with a still-draining worker (the test always Close()s first, but
+// being explicit here documents the intent).
+func pendingLen(u *RepoMetaUsecase) int {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return len(u.pending)
 }
 
 func TestIncrementPull_MissingRowTriggersRefresh(t *testing.T) {
@@ -202,8 +228,8 @@ func TestIncrementPull_MissingRowTriggersRefresh(t *testing.T) {
 		t.Errorf("increment calls = %d, want 1", repo.incrementCalls)
 	}
 	// The missing-row path should have enqueued a refresh.
-	if got := len(u.queue); got != 1 {
-		t.Errorf("expected refresh enqueue after missing-row increment; queue=%d", got)
+	if got := pendingLen(u); got != 1 {
+		t.Errorf("expected refresh enqueue after missing-row increment; pending=%d", got)
 	}
 }
 
@@ -218,8 +244,8 @@ func TestIncrementPull_ExistingRowNoRefresh(t *testing.T) {
 	if repo.rows["alice/app"].PullCount != 1 {
 		t.Errorf("pull count = %d, want 1", repo.rows["alice/app"].PullCount)
 	}
-	if got := len(u.queue); got != 0 {
-		t.Errorf("hit-row increment must NOT enqueue; queue=%d", got)
+	if got := pendingLen(u); got != 0 {
+		t.Errorf("hit-row increment must NOT enqueue; pending=%d", got)
 	}
 }
 
@@ -280,17 +306,13 @@ func TestRefreshWorker_DrainsQueue(t *testing.T) {
 	deadline := time.Now().Add(8 * time.Second)
 	var drained atomic.Bool
 	for time.Now().Before(deadline) {
-		u.mu.Lock()
-		pendingLen := len(u.pending)
-		u.mu.Unlock()
-		queueLen := len(u.queue)
-		if pendingLen == 0 && queueLen == 0 {
+		if pendingLen(u) == 0 {
 			drained.Store(true)
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	if !drained.Load() {
-		t.Fatalf("worker did not drain queue within deadline")
+		t.Fatalf("worker did not drain pending within deadline")
 	}
 }

@@ -382,38 +382,66 @@ func filterMetaByPatterns(items []*biz.RepoMeta, patterns []string) []*biz.RepoM
 	return out
 }
 
-// sortMeta orders items in place. Ties break on name asc so the result
-// is deterministic across equal-keys reruns.
+// sortMeta orders items in place. Mirrors the SQL ORDER BY in
+// data/repo_meta.go QueryPage so admins/unrestricted users (SQL path)
+// and pattern-restricted users (this path) see the same ordering for
+// the same query — repo ASC as a stable tiebreak regardless of the
+// primary direction. (Previously the helper flipped the entire
+// comparator for desc, which inverted the tiebreak too — page
+// boundaries shifted between the two paths and the UI's "Showing
+// X–Y of N" could disagree.)
 func sortMeta(items []*biz.RepoMeta, field, direction string) {
-	less := func(a, b *biz.RepoMeta) bool {
-		switch field {
-		case "updated":
-			// Created is ISO-8601; lexicographic compare is date-order.
-			if a.Created != b.Created {
-				return a.Created < b.Created
+	desc := direction == "desc"
+	primary := primaryComparator(field)
+	sort.SliceStable(items, func(i, j int) bool {
+		if c := primary(items[i], items[j]); c != 0 {
+			if desc {
+				return c > 0
 			}
-		case "size":
-			if a.Size != b.Size {
-				return a.Size < b.Size
-			}
-		case "tags":
-			if a.TagCount != b.TagCount {
-				return a.TagCount < b.TagCount
-			}
+			return c < 0
 		}
-		return a.Repo < b.Repo
-	}
-	sortSlice(items, less, direction == "asc")
+		// Tiebreak: repo ASC, always — matches the SQL secondary order.
+		return items[i].Repo < items[j].Repo
+	})
 }
 
-// sortSlice is a tiny wrapper to centralize the flip-for-desc logic.
-func sortSlice(items []*biz.RepoMeta, less func(a, b *biz.RepoMeta) bool, asc bool) {
-	sort.SliceStable(items, func(i, j int) bool {
-		if asc {
-			return less(items[i], items[j])
+// primaryComparator returns a -1/0/+1 comparator for the requested
+// sort column. Unknown column names — and the explicit "name" column —
+// compare on Repo, which mirrors data/repo_meta.go's sortFieldFor (it
+// also defaults to FieldRepo). Without this, sort=name&direction=desc
+// would silently return ASC because every primary comparison would be
+// zero and only the repo-ASC tiebreak would fire.
+func primaryComparator(field string) func(a, b *biz.RepoMeta) int {
+	switch field {
+	case "updated":
+		// Created is ISO-8601; lexicographic compare is date-order.
+		return func(a, b *biz.RepoMeta) int { return strings.Compare(a.Created, b.Created) }
+	case "size":
+		return func(a, b *biz.RepoMeta) int {
+			switch {
+			case a.Size < b.Size:
+				return -1
+			case a.Size > b.Size:
+				return 1
+			}
+			return 0
 		}
-		return less(items[j], items[i])
-	})
+	case "tags":
+		return func(a, b *biz.RepoMeta) int {
+			switch {
+			case a.TagCount < b.TagCount:
+				return -1
+			case a.TagCount > b.TagCount:
+				return 1
+			}
+			return 0
+		}
+	default:
+		// Includes "" and "name". Repo names are unique so the
+		// repo-ASC tiebreak in sortMeta is harmless dead code on this
+		// branch (good — it stays consistent with the other branches).
+		return func(a, b *biz.RepoMeta) int { return strings.Compare(a.Repo, b.Repo) }
+	}
 }
 
 // queryIntDefault reads an int query param, falling back on parse

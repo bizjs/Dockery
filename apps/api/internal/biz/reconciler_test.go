@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -212,18 +213,20 @@ func TestReconcile_PaginatedCatalog(t *testing.T) {
 
 // --- helpers --------------------------------------------------------
 
-// drainQueue empties the usecase's refresh channel and returns all
-// items in the order they were drained. Safe to call only after the
-// worker has been stopped (metaUC.Close).
+// drainQueue snapshots the usecase's pending-refresh set and clears it.
+// Returns repos in sorted order so assertions are deterministic. Safe
+// to call only after the worker has been stopped (metaUC.Close).
 func drainQueue(u *RepoMetaUsecase) []string {
-	var out []string
-	for {
-		select {
-		case r := <-u.queue:
-			out = append(out, r)
-		default:
-			return out
-		}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	out := make([]string, 0, len(u.pending))
+	for r := range u.pending {
+		out = append(out, r)
 	}
+	for r := range u.pending {
+		delete(u.pending, r)
+	}
+	sort.Strings(out)
+	return out
 }
 
