@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"strings"
+	"sync"
 
 	"api/internal/biz"
 
@@ -19,6 +20,12 @@ type repoMetaRefresher interface {
 	IncrementPull(ctx context.Context, repo string)
 }
 
+// seenEventCap bounds the per-generation event-ID set. With two
+// generations active at a time we track up to 2*cap distinct IDs (about
+// 140 KB of strings worst case at 36-char UUIDs), which comfortably
+// covers replays that arrive within a few minutes of the original.
+const seenEventCap = 1024
+
 // WebhookService receives distribution's notification events and
 // translates them into RepoMeta refresh / pull-count writes. Mounted at
 // a public route (no session) because distribution dials the endpoint
@@ -31,10 +38,58 @@ type repoMetaRefresher interface {
 type WebhookService struct {
 	secret *biz.WebhookSecret
 	meta   repoMetaRefresher
+	seen   *seenEvents
 }
 
 func NewWebhookService(secret *biz.WebhookSecret, meta *biz.RepoMetaUsecase) *WebhookService {
-	return &WebhookService{secret: secret, meta: meta}
+	return &WebhookService{
+		secret: secret,
+		meta:   meta,
+		seen:   newSeenEvents(seenEventCap),
+	}
+}
+
+// seenEvents is a bounded, allocation-stable dedup set for distribution
+// event IDs. Two generations are kept so an ID inserted at the moment a
+// generation rolls over is still detectable on its replay. When `cur`
+// reaches its cap, it becomes `prev` and a new empty `cur` takes over —
+// O(1) rotation with no per-item bookkeeping. Lookup walks both gens.
+type seenEvents struct {
+	mu   sync.Mutex
+	cur  map[string]struct{}
+	prev map[string]struct{}
+	cap  int
+}
+
+func newSeenEvents(cap int) *seenEvents {
+	return &seenEvents{
+		cur: make(map[string]struct{}, cap),
+		cap: cap,
+	}
+}
+
+// observe reports whether `id` was already present (true → caller should
+// skip). Empty IDs always return false; older distribution builds occasionally
+// emit events without one and we still want them to fire, just without
+// dedup protection.
+func (s *seenEvents) observe(id string) bool {
+	if id == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.cur[id]; ok {
+		return true
+	}
+	if _, ok := s.prev[id]; ok {
+		return true
+	}
+	if len(s.cur) >= s.cap {
+		s.prev = s.cur
+		s.cur = make(map[string]struct{}, s.cap)
+	}
+	s.cur[id] = struct{}{}
+	return false
 }
 
 // --- distribution event shape (see distribution notifications docs) ---
@@ -79,12 +134,20 @@ func (s *WebhookService) Handle(ctx *router.Context) error {
 	// Deduplicate repos we'll enqueue — a single push can emit several
 	// manifest events (manifest list + each child) and the queue's own
 	// dedup handles it, but pre-filtering keeps the log tidy.
+	//
+	// Per-event dedup also runs here against `s.seen`: distribution
+	// retries delivery on transport failures, so the same event ID can
+	// arrive twice. Replays of pull events would otherwise double-count;
+	// replays of push/delete events would waste an upstream refresh.
 	refreshSet := make(map[string]struct{})
 	for _, ev := range env.Events {
 		if ev.Target.Repository == "" {
 			continue
 		}
 		if !isManifestMediaType(ev.Target.MediaType) {
+			continue
+		}
+		if s.seen.observe(ev.ID) {
 			continue
 		}
 		switch ev.Action {

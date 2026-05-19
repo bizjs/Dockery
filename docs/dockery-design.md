@@ -523,8 +523,9 @@ Catalog 页 `GET /api/registry/overview` 从 `repo_meta` 表直接读，不再�
 `biz/Reconciler` 启动时延 3s 启动，之后每 `DockeryReconciler.IntervalMinutes`（默认 30 min）做一次全量 diff：`GET /v2/_catalog` keyset 分页（`n=1000`）拿 upstream 全集 → `AllRepos()` 拿 cache → 双向 diff：
 - upstream ∖ cache → `EnqueueRefresh`，写 audit `registry.reconcile.added`
 - cache ∖ upstream → `DeleteRepo`，写 audit `registry.reconcile.removed`
+- `refreshed_at < now - 24h` → `EnqueueRefresh`（不写 audit，避免每轮刷屏；条数计入 info 日志）
 
-审计条目让"webhook 丢包"这种默默发生的事情变得可见——同一个 repo 反复被 reconcile 添加/删除说明 notifications 链路有问题。
+成员 diff 让"webhook 丢包"这种默默发生的事情变得可见。stale 行重刷是为算法演进（e.g. `pickRepresentativeTag` 从 lex 改 semver）准备的自愈通道——单轮负载最多约 1/48 缓存，按 30 min 节奏自然摊平到 24h 内全量收敛。
 
 **共享 HTTP 客户端**
 

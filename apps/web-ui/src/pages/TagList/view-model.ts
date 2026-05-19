@@ -5,9 +5,47 @@
 
 import { BaseViewModel, type ViewModelLifecycle } from '@/lib/viewmodel/BaseViewModel';
 import { listImageTags, deleteImageTag, type ImageInfo } from '@/services/registry.service';
+import { compareTags } from './sort';
 
 type SortField = 'tag' | 'size' | 'created';
 type SortDirection = 'asc' | 'desc';
+
+// applySort is the single ordering function for both the initial fetch
+// and user-driven re-sorts. Operates on a plain array (not a Valtio
+// proxy) so the comparator never reads through proxy traps — that
+// matters because the proxied array items can briefly look stale on
+// the microtask boundary between two consecutive $updateState writes.
+// Returns a new array; never mutates the input.
+function applySort(
+  list: ImageInfo[],
+  field: SortField | null,
+  direction: SortDirection,
+): ImageInfo[] {
+  if (!field) return [...list];
+  const copy = [...list];
+  copy.sort((a, b) => {
+    let cmp = 0;
+    switch (field) {
+      case 'tag':
+        // Strict semver via compareTags: handles prereleases correctly
+        // (v1.0.0-rc.1 < v1.0.0) and falls back to natural-order
+        // compare for non-semver tags (latest, dev, dates).
+        cmp = compareTags(a.tag, b.tag);
+        break;
+      case 'size':
+        cmp = a.size - b.size;
+        break;
+      case 'created': {
+        const da = a.created ? new Date(a.created).getTime() : 0;
+        const db = b.created ? new Date(b.created).getTime() : 0;
+        cmp = da - db;
+        break;
+      }
+    }
+    return direction === 'asc' ? cmp : -cmp;
+  });
+  return copy;
+}
 
 interface ViewState {
   image: string;
@@ -41,7 +79,10 @@ export class TagListViewModel extends BaseViewModel<ViewState> implements ViewMo
       tagList: [],
       loading: true,
       error: null,
-      sortField: null,
+      // Default to version-newest-first via the semver-aware compareTags
+      // (see ./sort.ts) so `v0.0.10` correctly sits above `v0.0.9`.
+      // Mirrors the backend's pickRepresentativeTag intent.
+      sortField: 'tag',
       sortDirection: 'desc',
       selectedTag: null,
       isDrawerOpen: false,
@@ -70,8 +111,14 @@ export class TagListViewModel extends BaseViewModel<ViewState> implements ViewMo
     try {
       this.$updateState({ loading: true, error: null });
       const tagList = await listImageTags(this.state.image);
+      // Sort BEFORE committing to state so the table never flashes the
+      // upstream order (which is undefined; distribution doesn't sort).
+      // The previous two-step "commit then sort" briefly painted the
+      // unsorted list and — with Valtio's array proxying — could leak
+      // through if a snapshot was taken between the two writes.
+      const sorted = applySort(tagList, this.state.sortField, this.state.sortDirection);
       this.$updateState({
-        tagList,
+        tagList: sorted,
         loading: false,
         page: 0,
         selectedTags: [],
@@ -92,38 +139,19 @@ export class TagListViewModel extends BaseViewModel<ViewState> implements ViewMo
   }
 
   setSorting(field: SortField) {
-    const { sortField, sortDirection } = this.state;
+    const { sortField, sortDirection, tagList } = this.state;
     const nextDir: SortDirection =
       sortField === field ? (sortDirection === 'asc' ? 'desc' : 'asc') : 'desc';
-    this.$updateState({ sortField: field, sortDirection: nextDir, page: 0 });
-    this.sortTagList();
-  }
-
-  private sortTagList() {
-    const { sortField, sortDirection, tagList } = this.state;
-    if (!sortField) return;
-
-    const sorted = [...tagList].sort((a, b) => {
-      let cmp = 0;
-      switch (sortField) {
-        case 'tag':
-          // numeric: true → v10 sorts after v2 (natural order for version tags).
-          cmp = a.tag.localeCompare(b.tag, undefined, { numeric: true, sensitivity: 'base' });
-          break;
-        case 'size':
-          cmp = a.size - b.size;
-          break;
-        case 'created': {
-          const da = a.created ? new Date(a.created).getTime() : 0;
-          const db = b.created ? new Date(b.created).getTime() : 0;
-          cmp = da - db;
-          break;
-        }
-      }
-      return sortDirection === 'asc' ? cmp : -cmp;
+    // Sort on a plain-array copy of the current proxy state, then
+    // commit field + direction + tagList in one $updateState. Combining
+    // the writes makes the sort atomic to subscribers.
+    const sorted = applySort([...tagList], field, nextDir);
+    this.$updateState({
+      sortField: field,
+      sortDirection: nextDir,
+      tagList: sorted,
+      page: 0,
     });
-
-    this.$updateState({ tagList: sorted });
   }
 
   openDrawer(tagInfo: ImageInfo) {

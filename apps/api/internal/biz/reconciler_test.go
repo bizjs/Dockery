@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -74,8 +75,13 @@ func newReconcilerRig(t *testing.T, upstreamURL string, cached []string) (*Recon
 	t.Helper()
 
 	repo := newFakeRepoMetaRepo()
+	now := time.Now().Unix()
 	for _, r := range cached {
-		repo.rows[r] = &RepoMeta{Repo: r}
+		// RefreshedAt = now keeps cached rows out of the stale-refresh
+		// path so the add/remove diff tests stay focused on membership
+		// drift, not freshness. The stale-row test seeds its own rows
+		// with an explicit RefreshedAt.
+		repo.rows[r] = &RepoMeta{Repo: r, RefreshedAt: now}
 	}
 
 	ks, err := NewKeystore(KeystoreConfig{
@@ -194,6 +200,41 @@ func TestReconcile_NoDrift_NoAudit(t *testing.T) {
 	}
 }
 
+func TestReconcile_RefreshesStaleRows(t *testing.T) {
+	// Cache has rows whose refreshed_at is older than the stale threshold
+	// (24h). Even though membership matches upstream perfectly, those
+	// rows must be enqueued for refresh — otherwise an algorithm change
+	// in pickRepresentativeTag / size aggregation / etc. would leave
+	// historical rows showing stale derived data indefinitely.
+	upstream := fakeCatalogServer(t, []string{"old/repo", "fresh/repo"})
+	t.Cleanup(upstream.Close)
+
+	// Build the rig with both rows present so neither is "added" /
+	// "removed" by the membership diff. Then rewrite refreshed_at on
+	// one of them to simulate a row last refreshed 25h ago.
+	rec, repo, audit, metaUC := newReconcilerRig(t, upstream.URL,
+		[]string{"old/repo", "fresh/repo"})
+	metaUC.Close()
+	repo.mu.Lock()
+	repo.rows["old/repo"].RefreshedAt = time.Now().Add(-25 * time.Hour).Unix()
+	repo.mu.Unlock()
+
+	rec.ReconcileOnce(context.Background())
+
+	queued := drainQueue(metaUC)
+	if len(queued) != 1 || queued[0] != "old/repo" {
+		t.Errorf("stale enqueue = %v, want [old/repo] (fresh/repo must NOT be enqueued)",
+			queued)
+	}
+	// Stale refreshes don't write audit rows — that would flood the
+	// log on every reconcile cycle. Only add/remove drift gets audited.
+	for _, e := range audit.entries {
+		if e.Action == ActionReconcileAdded || e.Action == ActionReconcileRemoved {
+			t.Errorf("unexpected drift audit entry: %+v", e)
+		}
+	}
+}
+
 func TestReconcile_PaginatedCatalog(t *testing.T) {
 	// 5 repos with pageSize=2 forces 3 upstream round-trips. Reconciler
 	// must follow Link: rel="next" to fully enumerate before diffing.
@@ -212,18 +253,20 @@ func TestReconcile_PaginatedCatalog(t *testing.T) {
 
 // --- helpers --------------------------------------------------------
 
-// drainQueue empties the usecase's refresh channel and returns all
-// items in the order they were drained. Safe to call only after the
-// worker has been stopped (metaUC.Close).
+// drainQueue snapshots the usecase's pending-refresh set and clears it.
+// Returns repos in sorted order so assertions are deterministic. Safe
+// to call only after the worker has been stopped (metaUC.Close).
 func drainQueue(u *RepoMetaUsecase) []string {
-	var out []string
-	for {
-		select {
-		case r := <-u.queue:
-			out = append(out, r)
-		default:
-			return out
-		}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	out := make([]string, 0, len(u.pending))
+	for r := range u.pending {
+		out = append(out, r)
 	}
+	for r := range u.pending {
+		delete(u.pending, r)
+	}
+	sort.Strings(out)
+	return out
 }
 
