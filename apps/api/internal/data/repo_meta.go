@@ -116,6 +116,16 @@ func (r *repoMetaRepo) AllRepos(ctx context.Context) ([]string, error) {
 		Strings(ctx)
 }
 
+// ListStale returns repo names whose refreshed_at < before. Filter
+// happens in SQL (refreshed_at is indexed — see schema/repo_meta.go)
+// so we don't load every row into memory for a "is this old" check.
+func (r *repoMetaRepo) ListStale(ctx context.Context, before time.Time) ([]string, error) {
+	return r.data.DB().RepoMeta.Query().
+		Where(repometa.RefreshedAtLT(before)).
+		Select(repometa.FieldRepo).
+		Strings(ctx)
+}
+
 // QueryPage is the DB-backed read path for the Overview endpoint. All
 // filtering, sorting, and pagination happen at the SQL layer so memory
 // stays bounded no matter how many repos the cache holds.

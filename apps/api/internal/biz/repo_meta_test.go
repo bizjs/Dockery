@@ -81,6 +81,19 @@ func (f *fakeRepoMetaRepo) AllRepos(_ context.Context) ([]string, error) {
 	return out, nil
 }
 
+func (f *fakeRepoMetaRepo) ListStale(_ context.Context, before time.Time) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cutoff := before.Unix()
+	out := make([]string, 0)
+	for _, m := range f.rows {
+		if m.RefreshedAt < cutoff {
+			out = append(out, m.Repo)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeRepoMetaRepo) QueryPage(_ context.Context, filter OverviewFilter) (*OverviewPage, error) {
 	// Only need enough to keep callers that happen to use this method
 	// working in tests — current biz_test callers don't exercise this

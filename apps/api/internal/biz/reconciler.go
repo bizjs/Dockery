@@ -99,6 +99,18 @@ func (r *Reconciler) run(ctx context.Context) {
 	}
 }
 
+// staleRefreshAge is how long a row may go without being refreshed
+// before the reconciler proactively re-fetches it. Bounds the worst-
+// case "frozen at old value" window — relevant when an algorithm change
+// (e.g. semver-aware pickRepresentativeTag) would otherwise leave
+// historical rows displaying stale derived data forever.
+//
+// 24h means a row touched by any webhook within the last day is left
+// alone; only the truly cold ones get re-fetched. At a 30-min
+// reconcile cadence that's at most ~1/48 of the cache per cycle, so
+// upstream load stays light even for big registries.
+const staleRefreshAge = 24 * time.Hour
+
 // ReconcileOnce walks /v2/_catalog, compares to repo_meta, and reacts
 // to the diff:
 //
@@ -107,6 +119,11 @@ func (r *Reconciler) run(ctx context.Context) {
 //   - repo in cache but not in upstream → delete row (was missed —
 //     probably a lost delete webhook, or the repo was GC'd)
 //   - no discrepancy                    → no-op, no audit noise
+//
+// After the membership diff, it also enqueues a refresh for any cached
+// row whose refreshed_at is older than staleRefreshAge. These don't get
+// individual audit entries (that would flood the log on every cycle);
+// the count is rolled into the info-level summary at the bottom.
 //
 // Discrepancies are audited so operators notice repeated drift
 // (indicating webhooks are broken) instead of silently self-healing.
@@ -155,9 +172,21 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 			Detail: map[string]any{"reason": "absent upstream, present in cache"},
 		})
 	}
-	if added > 0 || removed > 0 {
-		r.logger.Infof("reconcile: +%d / -%d (upstream=%d, cache=%d)",
-			added, removed, len(upstream), len(cached))
+
+	stale, err := r.meta.ListStale(ctx, time.Now().Add(-staleRefreshAge))
+	if err != nil {
+		// Don't bail — the add/remove work above already happened and
+		// stale-refresh is a self-healing optimization, not a hard
+		// requirement. Just log and let the next cycle retry.
+		r.logger.Warnf("list stale: %v", err)
+	}
+	for _, repo := range stale {
+		r.meta.EnqueueRefresh(repo)
+	}
+
+	if added > 0 || removed > 0 || len(stale) > 0 {
+		r.logger.Infof("reconcile: +%d / -%d / stale=%d (upstream=%d, cache=%d)",
+			added, removed, len(stale), len(upstream), len(cached))
 	}
 }
 

@@ -74,6 +74,12 @@ Two auth paths share one permission model:
 
 See [docs/dockery-design.md §8.6](./docs/dockery-design.md) — that's the source of truth. Short version: the Catalog page reads a denormalized `repo_meta` table kept in sync by distribution webhooks + a periodic reconciler + the refresh worker in `biz/RepoMetaUsecase`. HTTP primitives live in `internal/util/registryfetch/` and are shared by biz and service/registry's `enrichManifestList`.
 
+**Three layers of cache freshness**:
+
+1. **Webhooks** — push/pull/delete from distribution refresh the affected row within milliseconds. Source of truth in steady state.
+2. **Reconciler (30 min cycle)** — diffs `/v2/_catalog` against the cache and (a) enqueues refresh for repos missing from cache, (b) deletes rows whose repo vanished upstream, **and (c) enqueues refresh for any row whose `refreshed_at` is older than 24h**. The 24h sweep is the self-healing path for algorithm changes (e.g. `pickRepresentativeTag` semver fix) that would otherwise leave historical rows frozen at the old derived value. Spread across the 48 cycles per day, this costs at most ~1/48th of the cache per cycle.
+3. **Post-GC resync** — admin-triggered GC always finishes with `resyncCache(ctx)` (ReconcileOnce + EnqueueRefresh for every cached repo, audited as `registry.cache.resynced`). Use this when you don't want to wait the up-to-24h reconciler window after a code change.
+
 ### Roles
 
 Three roles in the `users` table; `users.role` alone dictates actions (no per-row action list):

@@ -83,6 +83,14 @@ type RepoMetaRepo interface {
 	Delete(ctx context.Context, repo string) error
 	List(ctx context.Context) ([]*RepoMeta, error)
 	AllRepos(ctx context.Context) ([]string, error)
+	// ListStale returns the names of repos whose `refreshed_at` is
+	// strictly older than `before`. Used by the reconciler to pull
+	// existing rows back through the refresh worker so any drift in the
+	// derived columns (latest_tag rank, platform aggregation, size
+	// recomputation, …) eventually self-heals — handy after an
+	// algorithm change that would otherwise leave historical rows
+	// frozen at the old value.
+	ListStale(ctx context.Context, before time.Time) ([]string, error)
 	// QueryPage filters/sorts/paginates at the SQL layer for the
 	// Overview endpoint. Used when no per-user pattern filter applies
 	// (admin users or non-admins with no patterns) — the pattern case
@@ -167,6 +175,13 @@ func (u *RepoMetaUsecase) Get(ctx context.Context, repo string) (*RepoMeta, erro
 
 func (u *RepoMetaUsecase) AllRepos(ctx context.Context) ([]string, error) {
 	return u.repo.AllRepos(ctx)
+}
+
+// ListStale is the usecase wrapper around the repo method of the same
+// name. Exposed here so the reconciler can avoid importing the data
+// layer directly.
+func (u *RepoMetaUsecase) ListStale(ctx context.Context, before time.Time) ([]string, error) {
+	return u.repo.ListStale(ctx, before)
 }
 
 // QueryPage is the read-path for /api/registry/overview when the caller
