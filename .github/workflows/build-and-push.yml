@@ -178,4 +178,9 @@ jobs:
           # chore(…) so the commit itself is skipped by git-cliff and
           # doesn't recursively show up in the next release's notes.
           git commit -m "chore(changelog): ${{ github.ref_name }} [skip ci]"
-          git push origin main
+          # Explicit refspec (HEAD:refs/heads/main) instead of the
+          # short `main` so the push survives the existence of a
+          # stray `refs/tags/main` (or any other ref) sharing the
+          # name — the short form would otherwise fail with
+          # "src refspec main matches more than one".
+          git push origin HEAD:refs/heads/main
