@@ -10,6 +10,12 @@ name: Build and Push to GHCR
 #    Type the bare version (e.g. 0.1.0). It's used verbatim as the
 #    image tag and APP_VERSION; the git tag pushed to origin is
 #    v-prefixed (→ v0.1.0) to stay consistent with path 1.
+#
+# Structure: a `build` job (image build/push/attest) and a separate
+# `release` job (GitHub Release + CHANGELOG splice). The split means a
+# flaky release step never costs a rebuild — just re-run the `release`
+# job to recover a missed CHANGELOG (the historical 0.8.0 gap). The
+# release steps are also idempotent, so re-running is safe.
 
 on:
   push:
@@ -22,13 +28,21 @@ on:
         required: true
         type: string
 
+# Serialize releases: two tags pushed close together would otherwise
+# race the CHANGELOG commit on main (non-fast-forward push → lost
+# changelog). cancel-in-progress:false queues rather than drops.
+concurrency:
+  group: release-${{ github.workflow }}
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-push:
+  build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       # write: create + push the git tag on manual dispatch.
       contents: write
@@ -36,6 +50,11 @@ jobs:
       # attest-build-provenance needs an OIDC token + attestation write.
       id-token: write
       attestations: write
+    outputs:
+      # Resolved v-prefixed tag, consumed by the release job. On tag
+      # push this is the ref; on manual dispatch github.ref_name is the
+      # *branch*, so we derive it from the input instead.
+      release_tag: ${{ steps.resolve.outputs.tag }}
 
     steps:
       - name: Checkout repository
@@ -44,6 +63,15 @@ jobs:
           # metadata-action's latest=auto needs all tags visible to
           # decide whether the current ref is the highest semver.
           fetch-depth: 0
+
+      - name: Resolve release tag
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=v${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -72,8 +100,9 @@ jobs:
 
       # Manual dispatch only — tag pushes already carry the git tag.
       # GITHUB_TOKEN-pushed tags don't re-trigger this workflow
-      # (GitHub policy). Runs BEFORE the build so a duplicate tag
-      # fails fast without publishing an orphan image.
+      # (GitHub policy), but this run continues regardless. Runs BEFORE
+      # the build so a duplicate tag fails fast without publishing an
+      # orphan image.
       - name: Push git tag
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -100,27 +129,47 @@ jobs:
           platforms: linux/amd64,linux/arm64
 
       - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
-      # --- Changelog + GitHub Release (semi-automatic via git-cliff) ---
-      #
-      # Runs only after build + attestation succeed. If either fails,
-      # we skip publishing release notes to avoid announcing a broken
-      # image.
+  # --- Changelog + GitHub Release (semi-automatic via git-cliff) ---
+  #
+  # Separate job: only runs if `build` fully succeeded, so we never
+  # announce a broken image. Being its own job, it's independently
+  # re-runnable — recover a missed CHANGELOG without a rebuild.
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # write: create the Release + commit CHANGELOG back to main.
+      contents: write
+    env:
+      TAG: ${{ needs.build.outputs.release_tag }}
+
+    steps:
+      - name: Checkout at the release tag
+        uses: actions/checkout@v4
+        with:
+          # The tag (v-prefixed). On manual dispatch it was just pushed
+          # by the build job. Full history + tags so git-cliff --latest
+          # can resolve the newest section.
+          ref: ${{ needs.build.outputs.release_tag }}
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Generate release notes for this tag
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
           # --latest: just the section for the newest tag.
-          # --strip header: the template's "# Changelog" preamble is
-          # dropped so the output is exactly the `## [x.y.z]` block —
-          # suitable both as a GitHub Release body and as something we
-          # splice into the existing CHANGELOG.md further down.
+          # --strip header: drop the "# Changelog" preamble so the
+          # output is exactly the `## [x.y.z]` block — good both as a
+          # GitHub Release body and as something we splice into
+          # CHANGELOG.md below.
           args: --latest --strip header
         env:
           OUTPUT: RELEASE_NOTES.md
@@ -128,12 +177,12 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ env.TAG }}
           body_path: ${{ github.workspace }}/RELEASE_NOTES.md
 
-      # CHANGELOG.md on main is always "one commit ahead" of the latest
-      # tag's tree — acceptable for a metadata file. Uses a fresh
-      # checkout of main so we're not mutating the tag ref.
+      # Fresh checkout of main so we commit to the branch tip, not the
+      # tag ref. Full depth so the push-retry rebase below has a merge
+      # base if main moved.
       - name: Checkout main for CHANGELOG commit
         uses: actions/checkout@v4
         with:
@@ -142,16 +191,21 @@ jobs:
           path: main-checkout
 
       - name: Splice release notes into CHANGELOG.md
-        # git-cliff's built-in --prepend inserts at position 0, which
-        # would push the new section ABOVE the "# Changelog" preamble
-        # and break the file's top-of-file shape. Use awk instead to
-        # insert right before the first existing `## [` heading, keeping
-        # the preamble and historical hand-written sections intact.
+        # git-cliff's --prepend writes above the "# Changelog" preamble
+        # and breaks the file's top shape, so we awk the section in
+        # right before the first existing `## [` heading instead. Guard
+        # makes it idempotent: if this version is already present (e.g.
+        # the release job is being re-run), do nothing.
         working-directory: main-checkout
         run: |
           notes="${{ github.workspace }}/RELEASE_NOTES.md"
           if [ ! -s "$notes" ]; then
             echo "release notes empty; nothing to splice"
+            exit 0
+          fi
+          version="${TAG#v}"
+          if grep -q "^## \[${version}\]" CHANGELOG.md; then
+            echo "CHANGELOG.md already has ${version}; skipping splice"
             exit 0
           fi
           awk -v notes="$notes" '
@@ -177,10 +231,21 @@ jobs:
           git add CHANGELOG.md
           # chore(…) so the commit itself is skipped by git-cliff and
           # doesn't recursively show up in the next release's notes.
-          git commit -m "chore(changelog): ${{ github.ref_name }} [skip ci]"
-          # Explicit refspec (HEAD:refs/heads/main) instead of the
-          # short `main` so the push survives the existence of a
-          # stray `refs/tags/main` (or any other ref) sharing the
-          # name — the short form would otherwise fail with
-          # "src refspec main matches more than one".
-          git push origin HEAD:refs/heads/main
+          git commit -m "chore(changelog): ${TAG} [skip ci]"
+          # Robust push: main may have moved (a human push, the dev→main
+          # merge, etc.) between checkout and now. Without a rebase+retry
+          # the non-fast-forward push silently loses this version's
+          # changelog — which is how earlier releases went missing.
+          # Explicit refspec (HEAD:refs/heads/main) so a stray
+          # refs/tags/main can't make the short form ambiguous.
+          n=0
+          until git push origin HEAD:refs/heads/main; do
+            n=$((n + 1))
+            if [ "$n" -ge 3 ]; then
+              echo "CHANGELOG push failed after $n attempts" >&2
+              exit 1
+            fi
+            echo "push rejected; rebasing onto latest main (attempt $n)…"
+            git fetch origin main
+            git rebase origin/main
+          done

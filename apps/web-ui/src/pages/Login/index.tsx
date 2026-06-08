@@ -2,7 +2,7 @@ import type React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Package } from 'lucide-react';
 
-import { useViewModel } from '@/lib/viewmodel';
+import { useViewModel } from 'bizify';
 import { LoginViewModel } from './view-model';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 
 export default function LoginPage() {
   const vm = useViewModel(LoginViewModel);
-  const state = vm.$useSnapshot();
+  const state = vm.useSnapshot();
   const navigate = useNavigate();
   const location = useLocation();
 

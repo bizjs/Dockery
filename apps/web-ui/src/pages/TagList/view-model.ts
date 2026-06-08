@@ -3,7 +3,7 @@
  * 管理 Docker 镜像标签列表的状态和业务逻辑
  */
 
-import { BaseViewModel, type ViewModelLifecycle } from '@/lib/viewmodel/BaseViewModel';
+import { ViewModelBase } from 'bizify';
 import { listImageTags, deleteImageTag, type ImageInfo } from '@/services/registry.service';
 import { compareTags } from './sort';
 
@@ -14,7 +14,7 @@ type SortDirection = 'asc' | 'desc';
 // and user-driven re-sorts. Operates on a plain array (not a Valtio
 // proxy) so the comparator never reads through proxy traps — that
 // matters because the proxied array items can briefly look stale on
-// the microtask boundary between two consecutive $updateState writes.
+// the microtask boundary between two consecutive state writes.
 // Returns a new array; never mutates the input.
 function applySort(
   list: ImageInfo[],
@@ -72,9 +72,9 @@ interface ViewState {
   pageSize: number;
 }
 
-export class TagListViewModel extends BaseViewModel<ViewState> implements ViewModelLifecycle {
-  constructor() {
-    super({
+export class TagListViewModel extends ViewModelBase<ViewState> {
+  protected $data(): ViewState {
+    return {
       image: '',
       tagList: [],
       loading: true,
@@ -97,27 +97,25 @@ export class TagListViewModel extends BaseViewModel<ViewState> implements ViewMo
       bulkDeleteFailed: [],
       page: 0,
       pageSize: 50,
-    });
+    };
   }
 
   async setImageName(name: string) {
-    this.state.image = name;
+    this.data.image = name;
     await this.loadTags();
   }
 
-  async $onMounted() {}
-
   private async loadTags() {
     try {
-      this.$updateState({ loading: true, error: null });
-      const tagList = await listImageTags(this.state.image);
+      Object.assign(this.data, { loading: true, error: null });
+      const tagList = await listImageTags(this.data.image);
       // Sort BEFORE committing to state so the table never flashes the
       // upstream order (which is undefined; distribution doesn't sort).
       // The previous two-step "commit then sort" briefly painted the
       // unsorted list and — with Valtio's array proxying — could leak
       // through if a snapshot was taken between the two writes.
-      const sorted = applySort(tagList, this.state.sortField, this.state.sortDirection);
-      this.$updateState({
+      const sorted = applySort(tagList, this.data.sortField, this.data.sortDirection);
+      Object.assign(this.data, {
         tagList: sorted,
         loading: false,
         page: 0,
@@ -126,7 +124,7 @@ export class TagListViewModel extends BaseViewModel<ViewState> implements ViewMo
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch tags';
-      this.$updateState({ error: errorMessage, loading: false });
+      Object.assign(this.data, { error: errorMessage, loading: false });
     }
   }
 
@@ -135,18 +133,18 @@ export class TagListViewModel extends BaseViewModel<ViewState> implements ViewMo
   }
 
   get tagCount(): number {
-    return this.state.tagList.length;
+    return this.data.tagList.length;
   }
 
   setSorting(field: SortField) {
-    const { sortField, sortDirection, tagList } = this.state;
+    const { sortField, sortDirection, tagList } = this.data;
     const nextDir: SortDirection =
       sortField === field ? (sortDirection === 'asc' ? 'desc' : 'asc') : 'desc';
     // Sort on a plain-array copy of the current proxy state, then
-    // commit field + direction + tagList in one $updateState. Combining
-    // the writes makes the sort atomic to subscribers.
+    // commit field + direction + tagList together. Combining the
+    // writes makes the sort atomic to subscribers.
     const sorted = applySort([...tagList], field, nextDir);
-    this.$updateState({
+    Object.assign(this.data, {
       sortField: field,
       sortDirection: nextDir,
       tagList: sorted,
@@ -155,37 +153,37 @@ export class TagListViewModel extends BaseViewModel<ViewState> implements ViewMo
   }
 
   openDrawer(tagInfo: ImageInfo) {
-    this.$updateState({ selectedTag: tagInfo, isDrawerOpen: true });
+    Object.assign(this.data, { selectedTag: tagInfo, isDrawerOpen: true });
   }
 
   closeDrawer() {
-    this.$updateState({ isDrawerOpen: false, selectedTag: null });
+    Object.assign(this.data, { isDrawerOpen: false, selectedTag: null });
   }
 
   openDeleteDialog(tagInfo: ImageInfo) {
-    this.$updateState({ deleteDialogOpen: true, tagToDelete: tagInfo });
+    Object.assign(this.data, { deleteDialogOpen: true, tagToDelete: tagInfo });
   }
 
   closeDeleteDialog() {
-    this.$updateState({ deleteDialogOpen: false, tagToDelete: null });
+    Object.assign(this.data, { deleteDialogOpen: false, tagToDelete: null });
   }
 
   async deleteTag() {
-    const { tagToDelete, image } = this.state;
+    const { tagToDelete, image } = this.data;
     if (!tagToDelete) return;
     try {
-      this.$updateState({ deleting: true });
+      this.data.deleting = true;
       await deleteImageTag(image, tagToDelete.tag);
-      this.$updateState({
-        tagList: this.state.tagList.filter((t) => t.tag !== tagToDelete.tag),
-        selectedTags: this.state.selectedTags.filter((t) => t !== tagToDelete.tag),
+      Object.assign(this.data, {
+        tagList: this.data.tagList.filter((t) => t.tag !== tagToDelete.tag),
+        selectedTags: this.data.selectedTags.filter((t) => t !== tagToDelete.tag),
         deleting: false,
         deleteDialogOpen: false,
         tagToDelete: null,
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to delete tag';
-      this.$updateState({ error: errorMessage, deleting: false });
+      Object.assign(this.data, { error: errorMessage, deleting: false });
       throw err;
     }
   }
@@ -196,7 +194,7 @@ export class TagListViewModel extends BaseViewModel<ViewState> implements ViewMo
    * additive, matching joxit's Shift+Click behaviour).
    */
   toggleTagSelection(tag: string, opts?: { shift?: boolean }) {
-    const { tagList, selectedTags, lastSelectedTag } = this.state;
+    const { tagList, selectedTags, lastSelectedTag } = this.data;
 
     if (opts?.shift && lastSelectedTag && lastSelectedTag !== tag) {
       const currIdx = tagList.findIndex((t) => t.tag === tag);
@@ -205,7 +203,7 @@ export class TagListViewModel extends BaseViewModel<ViewState> implements ViewMo
         const [from, to] = currIdx < prevIdx ? [currIdx, prevIdx] : [prevIdx, currIdx];
         const next = new Set(selectedTags);
         for (let i = from; i <= to; i++) next.add(tagList[i].tag);
-        this.$updateState({ selectedTags: Array.from(next), lastSelectedTag: tag });
+        Object.assign(this.data, { selectedTags: Array.from(next), lastSelectedTag: tag });
         return;
       }
     }
@@ -213,13 +211,13 @@ export class TagListViewModel extends BaseViewModel<ViewState> implements ViewMo
     const next = new Set(selectedTags);
     if (next.has(tag)) next.delete(tag);
     else next.add(tag);
-    this.$updateState({ selectedTags: Array.from(next), lastSelectedTag: tag });
+    Object.assign(this.data, { selectedTags: Array.from(next), lastSelectedTag: tag });
   }
 
   /** Toggle "select all on current page" — adds if any unchecked, removes if all checked. */
   toggleSelectPage(pageTags: string[]) {
     if (pageTags.length === 0) return;
-    const { selectedTags } = this.state;
+    const { selectedTags } = this.data;
     const current = new Set(selectedTags);
     const allSelected = pageTags.every((t) => current.has(t));
     if (allSelected) {
@@ -227,26 +225,26 @@ export class TagListViewModel extends BaseViewModel<ViewState> implements ViewMo
     } else {
       pageTags.forEach((t) => current.add(t));
     }
-    this.$updateState({ selectedTags: Array.from(current) });
+    this.data.selectedTags = Array.from(current);
   }
 
   clearSelection() {
-    this.$updateState({ selectedTags: [], lastSelectedTag: null });
+    Object.assign(this.data, { selectedTags: [], lastSelectedTag: null });
   }
 
   openBulkDeleteDialog() {
-    this.$updateState({ bulkDeleteDialogOpen: true, bulkDeleteFailed: [] });
+    Object.assign(this.data, { bulkDeleteDialogOpen: true, bulkDeleteFailed: [] });
   }
 
   closeBulkDeleteDialog() {
-    this.$updateState({ bulkDeleteDialogOpen: false });
+    this.data.bulkDeleteDialogOpen = false;
   }
 
   async bulkDelete(): Promise<{ deleted: number; failed: string[] }> {
-    const { selectedTags, image } = this.state;
+    const { selectedTags, image } = this.data;
     if (selectedTags.length === 0) return { deleted: 0, failed: [] };
 
-    this.$updateState({ bulkDeleting: true, bulkDeleteProgress: 0, bulkDeleteFailed: [] });
+    Object.assign(this.data, { bulkDeleting: true, bulkDeleteProgress: 0, bulkDeleteFailed: [] });
 
     const failed: string[] = [];
     const succeeded: string[] = [];
@@ -258,12 +256,12 @@ export class TagListViewModel extends BaseViewModel<ViewState> implements ViewMo
       } catch {
         failed.push(tag);
       }
-      this.$updateState({ bulkDeleteProgress: i + 1 });
+      this.data.bulkDeleteProgress = i + 1;
     }
 
     const succeededSet = new Set(succeeded);
-    this.$updateState({
-      tagList: this.state.tagList.filter((t) => !succeededSet.has(t.tag)),
+    Object.assign(this.data, {
+      tagList: this.data.tagList.filter((t) => !succeededSet.has(t.tag)),
       selectedTags: failed, // keep failed ones selected so user can retry
       lastSelectedTag: null,
       bulkDeleting: false,
@@ -276,21 +274,21 @@ export class TagListViewModel extends BaseViewModel<ViewState> implements ViewMo
 
   setPage(page: number) {
     const clamped = Math.max(0, Math.min(page, this.pageCount - 1));
-    this.$updateState({ page: clamped });
+    this.data.page = clamped;
   }
 
   setPageSize(pageSize: number) {
-    this.$updateState({ pageSize, page: 0 });
+    Object.assign(this.data, { pageSize, page: 0 });
   }
 
   get pageCount(): number {
-    const { tagList, pageSize } = this.state;
+    const { tagList, pageSize } = this.data;
     if (pageSize <= 0) return 1;
     return Math.max(1, Math.ceil(tagList.length / pageSize));
   }
 
   get pagedTagList(): ImageInfo[] {
-    const { tagList, page, pageSize } = this.state;
+    const { tagList, page, pageSize } = this.data;
     if (pageSize <= 0) return tagList;
     const start = page * pageSize;
     return tagList.slice(start, start + pageSize);

@@ -1,7 +1,7 @@
 import type React from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 
-import { useViewModel } from '@/lib/viewmodel';
+import { useViewModel } from 'bizify';
 import { AuditViewModel } from './view-model';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,7 +32,7 @@ const ANY_ACTION = '__any__';
 
 export default function AuditPage() {
   const vm = useViewModel(AuditViewModel);
-  const s = vm.$useSnapshot();
+  const s = vm.useSnapshot();
 
   async function onSubmit(e: React.SubmitEvent) {
     e.preventDefault();

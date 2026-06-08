@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { useViewModel } from '@/lib/viewmodel';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useViewModel } from 'bizify';
 import { TagListViewModel } from './view-model';
 import { TagTable } from './TagTable';
 import { TagDetailDrawer } from './TagDetailDrawer';
@@ -33,11 +33,20 @@ const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 
 export default function TagList() {
   const { image } = useParams<{ image: string }>();
-  const vm = useViewModel(TagListViewModel, { destroyOnUnmount: true });
-  const snapshot = vm.$useSnapshot();
-  const meSnap = useViewModel(currentUserViewModel).$useSnapshot();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const vm = useViewModel(TagListViewModel);
+  const snapshot = vm.useSnapshot();
+  const meSnap = currentUserViewModel.useSnapshot();
   // Role `view` can only pull; hide delete affordances to match server policy.
   const canDelete = meSnap.user?.role === 'admin' || meSnap.user?.role === 'write';
+
+  // Go back through history so the catalog's search / sort / pagination
+  // (carried in its URL query) is restored exactly. `location.key` is
+  // 'default' only when this is the first entry in the session's history
+  // (deep link / refresh on the detail page) — there's nothing to go
+  // back to, so fall back to a clean catalog.
+  const handleBack = () => (location.key !== 'default' ? navigate(-1) : navigate('/'));
 
   useEffect(() => {
     const decodedImage = decodeURIComponent(image || '');
@@ -45,7 +54,7 @@ export default function TagList() {
   }, [vm, image]);
 
   // Slice the sorted list for the current page. Kept in the component
-  // because Valtio class getters don't subscribe via $useSnapshot.
+  // because Valtio class getters don't subscribe via useSnapshot.
   const pageCount = useMemo(
     () => Math.max(1, Math.ceil(snapshot.tagList.length / snapshot.pageSize)),
     [snapshot.tagList.length, snapshot.pageSize],
@@ -74,12 +83,10 @@ export default function TagList() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-4">
-        <Link to="/">
-          <Button variant="ghost" size="sm">
-            <ChevronLeft className="h-4 w-4 mr-1" />
-            Back
-          </Button>
-        </Link>
+        <Button variant="ghost" size="sm" onClick={handleBack}>
+          <ChevronLeft className="h-4 w-4 mr-1" />
+          Back
+        </Button>
         <div className="flex-1">
           <h2 className="text-2xl font-bold">{snapshot.image}</h2>
           {!snapshot.loading && (

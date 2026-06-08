@@ -1,6 +1,6 @@
 import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
 
-import { useViewModel } from '@/lib/viewmodel';
+import { useViewModel } from 'bizify';
 import { MaintenanceViewModel } from './view-model';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -26,7 +26,7 @@ function formatDuration(ms: number): string {
 
 export default function MaintenancePage() {
   const vm = useViewModel(MaintenanceViewModel);
-  const s = vm.$useSnapshot();
+  const s = vm.useSnapshot();
 
   return (
     <div className="space-y-6">

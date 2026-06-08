@@ -67,6 +67,10 @@ func registerSessionRoutes(api *router.Router, svcs *service.Services) {
 	g.GET("/registry/catalog", svcs.Registry.Catalog)
 	g.GET("/registry/overview", svcs.Registry.Overview)
 	g.GET("/registry/{name:.+}/tags", svcs.Registry.Tags)
+	// Aggregated per-tag detail in one call — replaces the browser's
+	// 2N+1 manifest/config fan-out for the TagList page. Distinct
+	// trailing literal (/tags/details) so it can't collide with /tags.
+	g.GET("/registry/{name:.+}/tags/details", svcs.Registry.TagDetails)
 	g.GET("/registry/{name:.+}/manifests/{ref}", svcs.Registry.GetManifest)
 	g.DELETE("/registry/{name:.+}/manifests/{ref}", svcs.Registry.DeleteManifest)
 	g.GET("/registry/{name:.+}/blobs/{digest}", svcs.Registry.GetBlob)

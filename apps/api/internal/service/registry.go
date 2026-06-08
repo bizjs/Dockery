@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -484,6 +485,232 @@ func (s *RegistryService) Tags(ctx *router.Context) error {
 		out.Tags = []string{}
 	}
 	return ctx.Success(out)
+}
+
+// --- Tag details: server-side aggregated per-tag info for TagList -----
+
+// tagDetailConcurrency bounds the upstream fan-out when building the
+// per-tag detail list. The browser used to make 2N+1 calls (tags +
+// manifest + config per tag), serialized by its 6-connection-per-host
+// limit; we move that fan-out here — parallel and connection-pooled —
+// and return one response. The bound keeps a repo with hundreds of tags
+// from opening an unbounded number of connections to the registry.
+const tagDetailConcurrency = 12
+
+// TagPlatform is one row of a multi-arch tag's platform table. Mirrors
+// the frontend PlatformEntry: per-platform real image size + digest.
+type TagPlatform struct {
+	Os           string `json:"os,omitempty"`
+	Architecture string `json:"architecture,omitempty"`
+	Variant      string `json:"variant,omitempty"`
+	Digest       string `json:"digest"`
+	Size         int64  `json:"size"`
+}
+
+// TagHistory is one image-history entry; layer size/digest is spliced
+// onto non-empty layers (matches the frontend's history shape).
+type TagHistory struct {
+	Created    string `json:"created,omitempty"`
+	CreatedBy  string `json:"created_by,omitempty"`
+	Comment    string `json:"comment,omitempty"`
+	EmptyLayer bool   `json:"empty_layer,omitempty"`
+	Size       int64  `json:"size,omitempty"`
+	ID         string `json:"id,omitempty"`
+}
+
+// TagDetail is the full per-tag payload, JSON-shaped to match the
+// frontend's ImageInfo so the UI consumes the response directly.
+type TagDetail struct {
+	ImageName    string            `json:"imageName"`
+	Tag          string            `json:"tag"`
+	Digest       string            `json:"digest"`
+	Size         int64             `json:"size"`
+	Created      string            `json:"created,omitempty"`
+	Architecture string            `json:"architecture,omitempty"`
+	Os           string            `json:"os,omitempty"`
+	Layers       int               `json:"layers"`
+	ID           string            `json:"id,omitempty"`
+	Cmd          []string          `json:"cmd,omitempty"`
+	Env          []string          `json:"env,omitempty"`
+	WorkingDir   string            `json:"workingDir,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	ExposedPorts []string          `json:"exposedPorts,omitempty"`
+	History      []TagHistory      `json:"history,omitempty"`
+	Platforms    []TagPlatform     `json:"platforms,omitempty"`
+}
+
+// TagDetailsResponse wraps the list in an object so the envelope can
+// grow fields later without breaking the client.
+type TagDetailsResponse struct {
+	Items []TagDetail `json:"items"`
+}
+
+// imageConfig is the subset of the image config blob the UI renders.
+// Parsed here (not in registryfetch) because these fields are
+// UI-specific; the shared client keeps its config shape minimal for the
+// repo_meta path.
+type imageConfig struct {
+	Created      string `json:"created"`
+	Architecture string `json:"architecture"`
+	Os           string `json:"os"`
+	Config       struct {
+		Cmd          []string          `json:"Cmd"`
+		Env          []string          `json:"Env"`
+		WorkingDir   string            `json:"WorkingDir"`
+		Labels       map[string]string `json:"Labels"`
+		ExposedPorts map[string]any    `json:"ExposedPorts"`
+	} `json:"config"`
+	History []struct {
+		Created    string `json:"created"`
+		CreatedBy  string `json:"created_by"`
+		Comment    string `json:"comment"`
+		EmptyLayer bool   `json:"empty_layer"`
+	} `json:"history"`
+}
+
+// TagDetails returns full per-tag info for every tag of a repo in one
+// response, fanning out the upstream manifest/config fetches
+// server-side (parallel, connection-pooled) instead of the browser
+// doing 2N+1 round-trips. User must have pull on <name>.
+func (s *RegistryService) TagDetails(ctx *router.Context) error {
+	name := ctx.Param("name")
+	if err := s.authorize(ctx, name, "pull"); err != nil {
+		return err
+	}
+	tags, err := s.fetcher.Tags(ctx.Context(), name)
+	if err != nil {
+		return response.NewBizError(http.StatusBadGateway, 50000, fmt.Sprintf("upstream: %v", err))
+	}
+
+	items := make([]TagDetail, len(tags))
+	sem := make(chan struct{}, tagDetailConcurrency)
+	var wg sync.WaitGroup
+	for i, tag := range tags {
+		wg.Add(1)
+		go func(i int, tag string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			items[i] = s.buildTagDetail(ctx.Context(), name, tag)
+		}(i, tag)
+	}
+	wg.Wait()
+
+	return ctx.Success(TagDetailsResponse{Items: items})
+}
+
+// buildTagDetail resolves one tag to its TagDetail. Best-effort: a tag
+// whose manifest fetch fails comes back with just its name + zero size
+// (mirrors the frontend's prior per-tag fallback) so one bad tag never
+// fails the whole page.
+func (s *RegistryService) buildTagDetail(ctx context.Context, repo, tag string) TagDetail {
+	d := TagDetail{ImageName: repo, Tag: tag}
+	m, err := s.fetcher.Manifest(ctx, repo, tag)
+	if err != nil {
+		return d
+	}
+
+	// Multi-arch: no config/layers of its own — surface the per-platform
+	// list and the sum of real per-platform sizes, plus the latest build
+	// timestamp across runnable (non-attestation) children.
+	if m.IsList() {
+		platforms := make([]TagPlatform, len(m.Manifests))
+		metas := make([]registryfetch.ChildMeta, len(m.Manifests))
+		var wg sync.WaitGroup
+		for i, e := range m.Manifests {
+			platforms[i] = TagPlatform{
+				Os:           e.Platform.Os,
+				Architecture: e.Platform.Architecture,
+				Variant:      e.Platform.Variant,
+				Digest:       e.Digest,
+				Size:         e.Size, // replaced by real image size below if the child fetch succeeds
+			}
+			if e.Digest == "" {
+				continue
+			}
+			wg.Add(1)
+			go func(i int, digest string) {
+				defer wg.Done()
+				metas[i] = s.fetcher.ChildMeta(ctx, repo, digest)
+			}(i, e.Digest)
+		}
+		wg.Wait()
+
+		var total int64
+		var latestCreated string
+		for i := range platforms {
+			if metas[i].Size > 0 {
+				platforms[i].Size = metas[i].Size
+			}
+			total += platforms[i].Size
+			// Attestation manifests (os == "unknown") carry generator
+			// timestamps, not image builds — exclude from the tag's date.
+			if platforms[i].Os == "unknown" {
+				continue
+			}
+			if metas[i].Created != "" && metas[i].Created > latestCreated {
+				latestCreated = metas[i].Created
+			}
+		}
+		d.Size = total
+		d.Created = latestCreated
+		d.Platforms = platforms
+		return d
+	}
+
+	// Single-arch: size = config + layers; rich fields from config blob.
+	if m.Config != nil {
+		d.Size += m.Config.Size
+	}
+	for _, l := range m.Layers {
+		d.Size += l.Size
+	}
+	d.Layers = len(m.Layers)
+	if m.Config == nil || m.Config.Digest == "" {
+		return d
+	}
+
+	raw, err := s.fetcher.ConfigBlobRaw(ctx, repo, m.Config.Digest)
+	if err != nil {
+		return d
+	}
+	var cfg imageConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return d
+	}
+	d.Created = cfg.Created
+	d.Architecture = cfg.Architecture
+	d.Os = cfg.Os
+	d.Cmd = cfg.Config.Cmd
+	d.Env = cfg.Config.Env
+	d.WorkingDir = cfg.Config.WorkingDir
+	d.Labels = cfg.Config.Labels
+	if len(cfg.Config.ExposedPorts) > 0 {
+		ports := make([]string, 0, len(cfg.Config.ExposedPorts))
+		for p := range cfg.Config.ExposedPorts {
+			ports = append(ports, p)
+		}
+		// Map iteration is unordered — sort so the response is stable.
+		sort.Strings(ports)
+		d.ExposedPorts = ports
+	}
+	// Splice layer size/digest onto non-empty history entries (the drawer
+	// shows per-layer sizes). Mirrors the prior frontend correlation.
+	if len(cfg.History) > 0 && len(m.Layers) > 0 {
+		li := 0
+		hist := make([]TagHistory, 0, len(cfg.History))
+		for _, h := range cfg.History {
+			e := TagHistory{Created: h.Created, CreatedBy: h.CreatedBy, Comment: h.Comment, EmptyLayer: h.EmptyLayer}
+			if !h.EmptyLayer && li < len(m.Layers) {
+				e.Size = m.Layers[li].Size
+				e.ID = m.Layers[li].Digest
+				li++
+			}
+			hist = append(hist, e)
+		}
+		d.History = hist
+	}
+	return d
 }
 
 // GetManifest proxies /v2/<name>/manifests/<ref>. The Docker-Content-Digest

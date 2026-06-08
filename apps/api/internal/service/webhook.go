@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"strings"
 	"sync"
 
@@ -126,9 +128,20 @@ func (s *WebhookService) Handle(ctx *router.Context) error {
 		return err
 	}
 
+	// Decode the body directly rather than via ctx.Bind: distribution
+	// POSTs notifications with Content-Type
+	// "application/vnd.docker.distribution.events.v1+json", and Bind
+	// selects a codec by content subtype — it has no decoder for that
+	// vendor type and 500s. The payload is plain JSON regardless of the
+	// header, so read and unmarshal it ourselves and stay
+	// content-type-agnostic.
+	body, err := io.ReadAll(ctx.Request().Body)
+	if err != nil {
+		return response.ErrBadRequest.WithMessage("read request body")
+	}
 	var env registryEventEnvelope
-	if err := ctx.Bind(&env); err != nil {
-		return err
+	if err := json.Unmarshal(body, &env); err != nil {
+		return response.ErrBadRequest.WithMessage("invalid event payload")
 	}
 
 	// Deduplicate repos we'll enqueue — a single push can emit several

@@ -1,4 +1,4 @@
-import { BaseViewModel } from '@/lib/viewmodel/BaseViewModel';
+import { ViewModelBase } from 'bizify';
 import { authService, type CurrentUser } from '@/services/auth.service';
 import { ApiError } from '@/services/api';
 
@@ -15,50 +15,56 @@ interface State {
  * CurrentUserViewModel is a singleton that holds the authenticated
  * user. On first mount it hits /api/auth/me. Login/Logout flows mutate
  * this state so the header and route guards reactively update.
+ *
+ * It's a module-level singleton (not created via `useViewModel`), so
+ * bizify's `onMount` lifecycle never fires for it — the `/me` bootstrap
+ * is triggered explicitly via `bootstrap()` from AuthGuard instead.
  */
-export class CurrentUserViewModel extends BaseViewModel<State> {
-  constructor() {
-    super({ user: null, loading: false, initialized: false });
+export class CurrentUserViewModel extends ViewModelBase<State> {
+  private bootstrapped = false;
+
+  protected $data(): State {
+    return { user: null, loading: false, initialized: false };
   }
 
-  async $onMounted() {
-    // Only bootstrap once. Multiple components may useViewModel this
-    // singleton; the $onMounted fires per mount, so guard with
-    // initialized flag.
-    if (this.state.initialized) return;
-    await this.refresh();
+  /** Idempotent first-load of /me. Safe to call from multiple mounting
+   *  guards / StrictMode double-invokes — only the first wins. */
+  bootstrap(): void {
+    if (this.bootstrapped) return;
+    this.bootstrapped = true;
+    void this.refresh();
   }
 
   async refresh(): Promise<void> {
-    this.$updateState({ loading: true });
+    this.data.loading = true;
     try {
       const user = await authService.me();
-      this.$updateState({ user, loading: false, initialized: true });
+      Object.assign(this.data, { user, loading: false, initialized: true });
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        this.$updateState({ user: null, loading: false, initialized: true });
+        Object.assign(this.data, { user: null, loading: false, initialized: true });
         return;
       }
-      this.$updateState({ loading: false, initialized: true });
+      Object.assign(this.data, { loading: false, initialized: true });
       throw err;
     }
   }
 
   async login(username: string, password: string): Promise<void> {
     const user = await authService.login(username, password);
-    this.$updateState({ user, initialized: true });
+    Object.assign(this.data, { user, initialized: true });
   }
 
   async logout(): Promise<void> {
     try {
       await authService.logout();
     } finally {
-      this.$updateState({ user: null });
+      this.data.user = null;
     }
   }
 
   get isAdmin(): boolean {
-    return this.state.user?.role === 'admin';
+    return this.data.user?.role === 'admin';
   }
 }
 

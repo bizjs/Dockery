@@ -38,7 +38,7 @@
 
 ```bash
 # Docker Desktop → 设置 → Docker Engine: "insecure-registries": ["localhost:5001"]
-DOCKERY_ADMIN_PASSWORD='change-me' docker compose up --build -d
+make dev DOCKERY_ADMIN_PASSWORD='change-me'   # 本地构建镜像并启动整套
 open http://localhost:5001      # 用 admin / change-me 登录
 ```
 

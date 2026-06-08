@@ -1,4 +1,4 @@
-import { BaseViewModel } from '@/lib/viewmodel/BaseViewModel';
+import { ViewModelBase } from 'bizify';
 import { maintenanceService, type GCResult } from '@/services/maintenance.service';
 import { ApiError } from '@/services/api';
 
@@ -12,34 +12,34 @@ interface State {
 
 /** MaintenanceViewModel tracks the single-flight GC action and its outcome.
  *  The page is admin-only (route guard) so we don't re-check roles here. */
-export class MaintenanceViewModel extends BaseViewModel<State> {
-  constructor() {
-    super({
+export class MaintenanceViewModel extends ViewModelBase<State> {
+  protected $data(): State {
+    return {
       confirmOpen: false,
       running: false,
       lastResult: null,
       error: null,
-    });
+    };
   }
 
   openConfirm() {
-    this.$updateState({ confirmOpen: true, error: null });
+    Object.assign(this.data, { confirmOpen: true, error: null });
   }
 
   closeConfirm() {
-    if (this.state.running) return;
-    this.$updateState({ confirmOpen: false });
+    if (this.data.running) return;
+    this.data.confirmOpen = false;
   }
 
   async triggerGC(): Promise<void> {
-    this.$updateState({
+    Object.assign(this.data, {
       confirmOpen: false,
       running: true,
       error: null,
     });
     try {
       const result = await maintenanceService.triggerGC();
-      this.$updateState({ running: false, lastResult: result });
+      Object.assign(this.data, { running: false, lastResult: result });
     } catch (err) {
       let message = 'Garbage collection failed';
       if (err instanceof ApiError) {
@@ -49,7 +49,7 @@ export class MaintenanceViewModel extends BaseViewModel<State> {
           message = err.message;
         }
       }
-      this.$updateState({ running: false, error: message });
+      Object.assign(this.data, { running: false, error: message });
     }
   }
 }

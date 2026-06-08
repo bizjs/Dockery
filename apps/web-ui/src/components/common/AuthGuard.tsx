@@ -1,7 +1,6 @@
-import { type ReactNode } from 'react';
+import { type ReactNode, useEffect } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 
-import { useViewModel } from '@/lib/viewmodel';
 import { currentUserViewModel } from '@/hooks/use-current-user';
 
 interface Props {
@@ -16,8 +15,12 @@ interface Props {
  * the children or redirects.
  */
 export function AuthGuard({ children, adminOnly }: Props) {
-  const vm = useViewModel(currentUserViewModel);
-  const state = vm.$useSnapshot();
+  // The singleton isn't created via useViewModel, so bizify's onMount
+  // never fires for it — kick off the idempotent /me bootstrap here.
+  useEffect(() => {
+    currentUserViewModel.bootstrap();
+  }, []);
+  const state = currentUserViewModel.useSnapshot();
   const location = useLocation();
 
   if (!state.initialized) {

@@ -1,4 +1,4 @@
-import { BaseViewModel } from '@/lib/viewmodel/BaseViewModel';
+import { ViewModelBase } from 'bizify';
 import { auditService, type AuditEntry, type AuditAction } from '@/services/audit.service';
 import { ApiError } from '@/services/api';
 
@@ -38,9 +38,9 @@ function dtToUnix(dt: string): number {
   return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
 }
 
-export class AuditViewModel extends BaseViewModel<State> {
-  constructor() {
-    super({
+export class AuditViewModel extends ViewModelBase<State> {
+  protected $data(): State {
+    return {
       form: blankForm(),
       applied: blankForm(),
       limit: 50,
@@ -50,30 +50,30 @@ export class AuditViewModel extends BaseViewModel<State> {
       items: [],
       total: 0,
       expanded: new Set(),
-    });
+    };
   }
 
-  async $onMounted() {
-    await this.reload();
+  protected onMount() {
+    void this.reload();
   }
 
   // --- Form controls ---------------------------------------------------
 
   setField<K extends keyof FormState>(k: K, v: FormState[K]) {
-    this.$updateState({ form: { ...this.state.form, [k]: v } });
+    this.data.form = { ...this.data.form, [k]: v };
   }
 
   /** Apply current form + reset to first page. */
   async applyFilters(): Promise<void> {
-    this.$updateState({
-      applied: { ...this.state.form },
+    Object.assign(this.data, {
+      applied: { ...this.data.form },
       offset: 0,
     });
     await this.reload();
   }
 
   async clearFilters(): Promise<void> {
-    this.$updateState({
+    Object.assign(this.data, {
       form: blankForm(),
       applied: blankForm(),
       offset: 0,
@@ -82,56 +82,56 @@ export class AuditViewModel extends BaseViewModel<State> {
   }
 
   async setLimit(n: number): Promise<void> {
-    this.$updateState({ limit: n, offset: 0 });
+    Object.assign(this.data, { limit: n, offset: 0 });
     await this.reload();
   }
 
   // --- Pagination ------------------------------------------------------
 
   async nextPage(): Promise<void> {
-    const next = this.state.offset + this.state.limit;
-    if (next >= this.state.total) return;
-    this.$updateState({ offset: next });
+    const next = this.data.offset + this.data.limit;
+    if (next >= this.data.total) return;
+    this.data.offset = next;
     await this.reload();
   }
 
   async prevPage(): Promise<void> {
-    const prev = Math.max(0, this.state.offset - this.state.limit);
-    if (prev === this.state.offset) return;
-    this.$updateState({ offset: prev });
+    const prev = Math.max(0, this.data.offset - this.data.limit);
+    if (prev === this.data.offset) return;
+    this.data.offset = prev;
     await this.reload();
   }
 
   // --- Row actions -----------------------------------------------------
 
   toggleExpand(id: number) {
-    const next = new Set(this.state.expanded);
+    const next = new Set(this.data.expanded);
     if (next.has(id)) next.delete(id);
     else next.add(id);
-    this.$updateState({ expanded: next });
+    this.data.expanded = next;
   }
 
   // --- Fetch -----------------------------------------------------------
 
   async reload(): Promise<void> {
-    this.$updateState({ loading: true, error: null });
+    Object.assign(this.data, { loading: true, error: null });
     try {
       const { items, total } = await auditService.list({
-        actor: this.state.applied.actor || undefined,
-        action: this.state.applied.action || undefined,
-        since: dtToUnix(this.state.applied.since) || undefined,
-        until: dtToUnix(this.state.applied.until) || undefined,
-        limit: this.state.limit,
-        offset: this.state.offset,
+        actor: this.data.applied.actor || undefined,
+        action: this.data.applied.action || undefined,
+        since: dtToUnix(this.data.applied.since) || undefined,
+        until: dtToUnix(this.data.applied.until) || undefined,
+        limit: this.data.limit,
+        offset: this.data.offset,
       });
-      this.$updateState({
+      Object.assign(this.data, {
         items,
         total,
         loading: false,
         expanded: new Set(), // collapse on page change — detail rarely matters after filter swap
       });
     } catch (err) {
-      this.$updateState({
+      Object.assign(this.data, {
         loading: false,
         error: err instanceof ApiError ? err.message : 'Failed to load audit log',
       });

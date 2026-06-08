@@ -106,7 +106,64 @@ func postEvents(t *testing.T, baseURL, bearer string, events any) *http.Response
 	return resp
 }
 
+// postEventsCT is postEvents with an explicit Content-Type, used to
+// exercise the exact header distribution sends.
+func postEventsCT(t *testing.T, baseURL, bearer, contentType string, events any) *http.Response {
+	t.Helper()
+	body, err := json.Marshal(events)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost,
+		baseURL+"/api/internal/registry-events", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new req: %v", err)
+	}
+	req.Header.Set("Content-Type", contentType)
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
 // --- tests ----------------------------------------------------------
+
+// TestWebhook_DistributionContentType_Accepted guards the real-world
+// header distribution sends. Earlier the handler used ctx.Bind, which
+// picks a codec by content subtype and 500s on this vendor type — so
+// pushes never refreshed the cache even though every test above (all
+// using application/json) passed. The handler now decodes the body
+// directly; this locks that in.
+func TestWebhook_DistributionContentType_Accepted(t *testing.T) {
+	baseURL, secret, stub := newWebhookRig(t)
+	resp := postEventsCT(t, baseURL, secret,
+		"application/vnd.docker.distribution.events.v1+json",
+		map[string]any{
+			"events": []any{
+				map[string]any{
+					"action": "push",
+					"target": map[string]any{
+						"mediaType":  "application/vnd.docker.distribution.manifest.v2+json",
+						"repository": "redis",
+						"tag":        "good-night",
+						"digest":     "sha256:abcd",
+					},
+				},
+			},
+		})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (distribution content-type must be accepted)", resp.StatusCode)
+	}
+	r, _ := stub.snapshot()
+	if len(r) != 1 || r[0] != "redis" {
+		t.Errorf("refreshed = %v, want [redis]", r)
+	}
+}
 
 func TestWebhook_MissingBearer_Returns401(t *testing.T) {
 	baseURL, _, stub := newWebhookRig(t)
