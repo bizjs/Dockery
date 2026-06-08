@@ -1,36 +1,66 @@
-# Dev-mode support stack.
+# Dockery — full-stack LOCAL build + run.
 #
-# Runs just the distribution registry on host :5000 — no auth, delete
-# enabled — so you can iterate on the UI (`pnpm -C apps/web-ui dev`) and
-# the API (`cd apps/api && make run`) on bare metal while still having
-# something on /v2/ for the Vite proxy and dockery-api to talk to.
+# Builds the production all-in-one image from your working tree and runs
+# it, so ONE command gives you the complete, fully-functional app — Web
+# UI + dockery-api + distribution registry, fronted by nginx under
+# supervisord — straight from local source. This replaces the old
+# "registry-only container + run api/ui on bare metal" dev flow: no more
+# `make run` + `pnpm dev` + hand-editing `upstream_url`.
 #
-# Auth-less registry is intentional: in dev, dockery-api still mints
-# Bearer tokens for its proxy calls, but distribution without an `auth:`
-# block accepts every request regardless of the Authorization header.
-# This lets you test the UI→API→registry chain without managing JWKS in
-# two places.
+#   DOCKERY_ADMIN_PASSWORD=changeme docker compose -f docker-compose.dev.yaml up --build -d
+#   open http://localhost:5001              # first login: admin / changeme
 #
-#   docker compose -f docker-compose.dev.yaml up -d
-#   cd apps/api && make run          # :5001
-#   pnpm -C apps/web-ui dev          # :5173, proxies /v2→:5000 /api→:5001
+# Build-and-run (no hot reload): after changing UI or API code, rebuild
+# with the same command — `--build` re-runs the four-stage image build.
+#   docker compose -f docker-compose.dev.yaml up --build -d
 #
-# Data is persisted in a named volume — independent of the prod
-# `dockery-data` volume so production state can't be stomped on
-# accidentally.
+# Push/pull go through the same port (add "localhost:5001" to Docker
+# Desktop's insecure-registries until TLS lands):
+#   docker login localhost:5001            # admin / changeme
+#   docker tag hello-world localhost:5001/demo/hello:1
+#   docker push localhost:5001/demo/hello:1
+#
+# Single entrypoint by design: the all-in-one image binds dockery-api
+# (:3001) and the registry (:5001) to loopback INSIDE the container —
+# nginx (:5000 → host :5001) is the sole public port. They're not
+# published to the host on purpose (exposing them would mean weakening
+# the prod image's bind addresses). To poke a service directly while
+# debugging, go through the container:
+#   docker compose -f docker-compose.dev.yaml exec dockery \
+#     wget -qO- http://127.0.0.1:3001/healthz
+#
+# State lives in a DEV-ONLY volume, separate from the prod compose's
+# `dockery-data`, so the two never stomp on each other. Reset the dev
+# instance from scratch with:
+#   docker compose -f docker-compose.dev.yaml down -v
 services:
-  registry:
-    image: distribution/distribution:3.1.0
-    container_name: dockery-dev-registry
+  dockery:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        # Baked into the UI bundle (footer version stamp); required by
+        # docker/Dockerfile. Override with `APP_VERSION=0.1.0 docker
+        # compose -f docker-compose.dev.yaml build` for a real stamp.
+        APP_VERSION: "${APP_VERSION:-dev-local}"
+    image: dockery:dev
+    container_name: dockery-dev
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      # host 5001 → container 5000 (nginx). 5001 dodges macOS AirPlay,
+      # which squats on :5000.
+      - "5001:5000"
     environment:
-      REGISTRY_STORAGE_DELETE_ENABLED: "true"
-      REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /var/lib/registry
+      # First-boot admin. Defaults to a throwaway dev password so a bare
+      # `up` just works; override via the shell env for anything shared.
+      DOCKERY_ADMIN_USERNAME: admin
+      DOCKERY_ADMIN_PASSWORD: "${DOCKERY_ADMIN_PASSWORD:-changeme}"
+      # Realm the docker CLI is told to fetch tokens from — must match
+      # the host:port you actually hit.
+      REGISTRY_AUTH_TOKEN_REALM: "${REGISTRY_AUTH_TOKEN_REALM:-http://localhost:5001/token}"
     volumes:
-      - dockery-dev-registry:/var/lib/registry
+      - dockery-dev-data:/data
 
 volumes:
-  dockery-dev-registry:
+  dockery-dev-data:
     driver: local
