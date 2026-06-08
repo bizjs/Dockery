@@ -2,6 +2,79 @@
 
 本文件记录 Dockery 的所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.7.3] - 2026-04-25
+
+### 修复
+
+- **repo_meta**: use semver ordering in pickRepresentativeTag
+
+
+## [0.7.2] - 2026-04-25
+
+### 新增
+
+- **catalog**: default sort to newest-first (updated desc)
+
+
+## [0.7.1] - 2026-04-24
+
+### 新增
+
+- **gc**: resync repo_meta cache after garbage collection
+
+
+## [0.7.0] - 2026-04-23
+
+### 修复
+
+- use biz-utils copyText for HTTP-localhost clipboard fallback
+
+### 变更
+
+- extract catalog fetch into registryfetch.Client
+
+
+## [0.6.0] - 2026-04-23
+
+### 变更
+
+- extract registryfetch package, deduplicate registry HTTP logic
+- **catalog**: replace client-side fan-out with server-side overview API
+
+### 新增
+
+- **catalog**: add repo_meta cache design and VM tests
+- configurable reconciler interval and pkg→util scope rename
+- **catalog**: add refresh button and debounce search input
+- harden pull tracking, parallel child fetch, and shutdown
+- add repo_meta catalog cache with webhooks and reconciler
+- optimize UI
+
+
+## [0.5.0] - 2026-04-23
+
+### 修复
+
+- OTEL_SDK_DISABLED not set
+
+### 新增
+
+- update UI
+
+
+## [0.4.0] - 2026-04-22
+
+### 文档
+
+- add CHANGELOG.md and link it from both READMEs
+
+### 新增
+
+- **ci**: add git-cliff changelog automation on tag push
+- unrestricted access when no repo patterns; enrich manifest sizes
+## [0.2.0] - 2026-04-20
+
+
 ## [0.3.0] - 2026-04-21
 
 ### 新增
