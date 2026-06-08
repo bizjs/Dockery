@@ -29,10 +29,11 @@ export const CATALOG_DEFAULTS: CatalogUrlState = {
   pageSize: 50,
 };
 
-// Mirrors PAGE_SIZE_OPTIONS in index.tsx — a URL with any other size
-// would leave the page-size <Select> with no matching item, so we clamp
-// unknown values back to the default rather than honoring them.
-const VALID_PAGE_SIZES = [25, 50, 100, 200];
+/** The page-size choices offered by the Catalog's <Select> and the only
+ *  sizes a URL may carry — any other value would leave the dropdown with
+ *  no matching item, so parse clamps unknown sizes back to the default.
+ *  Single source of truth, imported by index.tsx for the dropdown. */
+export const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 const VALID_SORTS: SortField[] = ['name', 'updated', 'size', 'tags'];
 
 /**
@@ -64,8 +65,9 @@ export function parseCatalogParams(search: string): Partial<CatalogUrlState> {
   }
 
   const sizeRaw = params.get('size');
-  if (sizeRaw !== null && VALID_PAGE_SIZES.includes(Number(sizeRaw))) {
-    out.pageSize = Number(sizeRaw);
+  if (sizeRaw !== null) {
+    const size = Number(sizeRaw);
+    if (PAGE_SIZE_OPTIONS.includes(size)) out.pageSize = size;
   }
 
   return out;

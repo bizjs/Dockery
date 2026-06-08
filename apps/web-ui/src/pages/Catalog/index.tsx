@@ -25,7 +25,7 @@ import { toast } from 'sonner';
 
 import { useViewModel } from 'bizify';
 import { CatalogViewModel, type SortField } from './view-model';
-import { serializeCatalogParams } from './url-state';
+import { serializeCatalogParams, PAGE_SIZE_OPTIONS } from './url-state';
 import { SearchBar } from '@/components/common/SearchBar';
 import { formatBinarySize, formatDateTime } from '@/utils';
 import { compactArchLabel, formatPlatform } from '../TagList/platforms';
@@ -46,8 +46,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-
-const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 
 function archLabel(item: OverviewItem): { label: string; title: string } {
   const platforms = item.platforms ?? [];
