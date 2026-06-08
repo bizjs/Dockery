@@ -100,6 +100,16 @@ func (c *Client) ConfigBlob(ctx context.Context, repo, digest string) (*ConfigBl
 	return &out, nil
 }
 
+// ConfigBlobRaw returns the raw image-config JSON. Callers that need
+// fields beyond the minimal typed ConfigBlob (Cmd / Env / Labels /
+// ExposedPorts / history) parse the bytes into their own shape — the
+// typed ConfigBlob deliberately stays minimal for the repo_meta path,
+// so UI-specific config fields live in the service layer instead of
+// bloating this shared client.
+func (c *Client) ConfigBlobRaw(ctx context.Context, repo, digest string) ([]byte, error) {
+	return c.get(ctx, repo, fmt.Sprintf("/v2/%s/blobs/%s", repo, digest), "")
+}
+
 // ChildMeta pulls one manifest-list child + its config blob and
 // returns {size, created}. Best-effort: any upstream failure returns
 // a zero-value ChildMeta so callers can keep walking other children.
