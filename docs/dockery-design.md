@@ -86,8 +86,8 @@ dockery/
 │   ├── dockery-design.md    ← 本文档
 │   ├── distribution-analysis.md
 │   └── GHCR_DEPLOYMENT.md
-├── docker-compose.yaml          生产参考
-├── docker-compose.dev.yaml      开发（registry 独立跑 :4999）
+├── docker-compose.dev.yaml      本地构建+运行整套（make dev）
+├── docker-compose.ghcr.yml      生产部署（拉取预构建镜像）
 ├── package.json                 pnpm workspace 根
 ├── pnpm-workspace.yaml
 ├── CLAUDE.md
@@ -595,7 +595,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 
 ### 10.1 环境变量
 
-**当前实际读取**（`cmd/api/main.go` + `docker-compose.yaml`）：
+**当前实际读取**（`cmd/api/main.go` + `docker-compose.ghcr.yml`）：
 
 | 变量 | 默认 | 说明 |
 |---|---|---|

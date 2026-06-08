@@ -20,4 +20,15 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    // shadcn/ui primitives are generated and co-export a cva() `*Variants`
+    // constant next to the component (e.g. button.tsx → buttonVariants),
+    // which trips the Fast Refresh rule. Fast Refresh purity is irrelevant
+    // for generated primitives, so scope the rule off for that dir only —
+    // it stays strict everywhere else, and survives `pnpm ui` regen.
+    files: ['**/components/ui/**'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 ])

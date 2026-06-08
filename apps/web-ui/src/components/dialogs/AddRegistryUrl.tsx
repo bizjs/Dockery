@@ -25,7 +25,7 @@ export function AddRegistryUrl({ open, onOpenChange, onNotify }: AddRegistryUrlP
       onNotify(`Registry ${url} added successfully`);
       setUrl('');
       onOpenChange(false);
-    } catch (error) {
+    } catch {
       onNotify('Failed to add registry', true);
     }
   };

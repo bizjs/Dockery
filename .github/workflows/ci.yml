@@ -1,0 +1,69 @@
+name: CI
+
+# Validates every PR and every push to main/dev. The release workflow
+# (build-and-push.yml) only fires on tags, so this is the gate that
+# actually runs tests/lint/build before code reaches main.
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+
+# Cancel superseded runs on the same ref (e.g. rapid pushes to a PR).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  web-ui:
+    name: web-ui · lint / test / build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/web-ui
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm before setup-node so the node cache can resolve the pnpm store.
+      # Version 9 matches docker/Dockerfile's ui-builder stage.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/web-ui/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      # vitest auto-runs once (no watch) because GitHub Actions sets CI=true.
+      - run: pnpm test
+      # APP_VERSION is optional here — vite.config.ts falls back to 'dev'
+      # (the build-arg requirement is enforced only in the Docker build).
+      - run: pnpm build
+
+  api:
+    name: api · build / vet / test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
+
+      - run: go build ./...
+      - run: go vet ./...
+      # `make test` runs the suite minus the ent-generated package.
+      - run: make test
