@@ -38,7 +38,7 @@ Self-hosted Docker Registry — **Distribution v3.1.0 + React UI + accounts/perm
 
 ```bash
 # Docker Desktop → Settings → Docker Engine: "insecure-registries": ["localhost:5001"]
-DOCKERY_ADMIN_PASSWORD='change-me' docker compose up --build -d
+make dev DOCKERY_ADMIN_PASSWORD='change-me'   # build the image locally and start the full stack
 open http://localhost:5001      # log in as admin / change-me
 ```
 

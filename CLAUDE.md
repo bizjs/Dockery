@@ -9,12 +9,14 @@ Guidance for Claude Code working in this repository.
 - `apps/web-ui/` — React 19 + TypeScript SPA (Vite / rolldown-vite, Tailwind v4, shadcn/ui, React Router v7). All browser code lives here.
 - `apps/api/` — Go 1.25 + Kratos v2 + [kratoscarf](https://github.com/bizjs/kratoscarf) backend. Single static binary (`dockery-api`). ent ORM on SQLite (`modernc.org/sqlite`, no CGO).
 - `docker/` — `Dockerfile` (four-stage: ui-builder / api-builder / registry-src / runtime) and `rootfs/` (nginx, supervisord, registry `config.yml`, api `config.yaml` dropped into the container image).
-- `docker-compose.yaml` — single-service `dockery` built from `docker/Dockerfile`. Binds host `:5001` → container `:5000`.
+- `docker-compose.dev.yaml` — local build+run of the all-in-one image from source; driven by `make dev`. Binds host `:5001` → container `:5000`, dev-isolated `dockery-dev-data` volume.
+- `docker-compose.ghcr.yml` — consumer-side deploy: pulls the prebuilt `ghcr.io/bizjs/dockery` image instead of building. The README quickstart points here for production.
+- `Makefile` (repo root) — `make dev` / `dev-logs` / `dev-down` / `dev-reset` wrap the dev compose stack.
 - `docs/dockery-design.md` — authoritative design doc (CN).
 - `docs/distribution-analysis.md` — upstream Distribution Registry behavior reference.
 - `.github/workflows/build-and-push.yml` — builds & pushes `ghcr.io/<owner>/<repo>` on `v*` tags (multi-arch: `linux/amd64,linux/arm64`).
 
-Not in repo yet (planned): pnpm workspace root, `docker-compose.dev.yaml`, `docker-compose.ghcr.yml`.
+Not in repo yet (planned): pnpm workspace root.
 
 ## Common commands
 
@@ -46,10 +48,10 @@ go test ./...
 ./bin/dockery-api -conf ./configs user delete alice
 ```
 
-**Full stack via compose**:
+**Full stack via compose** (local build+run; `make dev` wraps `docker compose -f docker-compose.dev.yaml up --build -d`):
 
 ```bash
-DOCKERY_ADMIN_PASSWORD=changeme docker compose up --build -d
+make dev DOCKERY_ADMIN_PASSWORD=changeme
 open http://localhost:5001      # first login: admin / changeme
 ```
 
