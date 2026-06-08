@@ -2,6 +2,23 @@
 
 本文件记录 Dockery 的所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.9.0] - 2026-06-08
+
+### 修复
+
+- **webhook**: decode body directly to handle distribution content-type
+
+### 变更
+
+- **catalog**: make PAGE_SIZE_OPTIONS single source of truth
+- migrate viewmodel layer from local BaseViewModel to bizify
+
+### 新增
+
+- remove unused file
+- **registry**: add server-side aggregated tag details endpoint
+
+
 ## [0.7.3] - 2026-04-25
 
 ### 修复
