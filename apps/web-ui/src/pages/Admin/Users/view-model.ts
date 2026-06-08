@@ -1,4 +1,4 @@
-import { BaseViewModel } from '@/lib/viewmodel/BaseViewModel';
+import { ViewModelBase } from 'bizify';
 import { userService, type UserView } from '@/services/user.service';
 import { permissionService, type PermissionView } from '@/services/permission.service';
 import type { UserRole } from '@/services/auth.service';
@@ -39,9 +39,9 @@ interface State {
 
 const blankCreate = (): State['createForm'] => ({ username: '', password: '', role: 'view' });
 
-export class UsersViewModel extends BaseViewModel<State> {
-  constructor() {
-    super({
+export class UsersViewModel extends ViewModelBase<State> {
+  protected $data(): State {
+    return {
       users: [],
       loading: true,
       error: null,
@@ -64,20 +64,20 @@ export class UsersViewModel extends BaseViewModel<State> {
       permsEditingId: null,
       permsEditText: '',
       permsRowBusyId: null,
-    });
+    };
   }
 
-  async $onMounted() {
-    await this.refresh();
+  protected onMount() {
+    void this.refresh();
   }
 
   async refresh() {
-    this.$updateState({ loading: true, error: null });
+    Object.assign(this.data, { loading: true, error: null });
     try {
       const { items } = await userService.list();
-      this.$updateState({ users: items, loading: false });
+      Object.assign(this.data, { users: items, loading: false });
     } catch (err) {
-      this.$updateState({
+      Object.assign(this.data, {
         loading: false,
         error: err instanceof ApiError ? err.message : 'Failed to load users',
       });
@@ -87,7 +87,7 @@ export class UsersViewModel extends BaseViewModel<State> {
   // --- Create dialog --------------------------------------------------
 
   openCreate() {
-    this.$updateState({
+    Object.assign(this.data, {
       createOpen: true,
       createForm: blankCreate(),
       createError: null,
@@ -95,34 +95,34 @@ export class UsersViewModel extends BaseViewModel<State> {
   }
 
   closeCreate() {
-    this.$updateState({ createOpen: false, createError: null });
+    Object.assign(this.data, { createOpen: false, createError: null });
   }
 
   setCreateField<K extends keyof State['createForm']>(k: K, v: State['createForm'][K]) {
-    this.$updateState({ createForm: { ...this.state.createForm, [k]: v } });
+    this.data.createForm = { ...this.data.createForm, [k]: v };
   }
 
   async submitCreate(): Promise<boolean> {
-    const { username, password, role } = this.state.createForm;
+    const { username, password, role } = this.data.createForm;
     if (!username || !password) {
-      this.$updateState({ createError: 'Username and password required' });
+      this.data.createError = 'Username and password required';
       return false;
     }
     if (password.length < 8) {
-      this.$updateState({ createError: 'Password must be at least 8 characters' });
+      this.data.createError = 'Password must be at least 8 characters';
       return false;
     }
-    this.$updateState({ createSubmitting: true, createError: null });
+    Object.assign(this.data, { createSubmitting: true, createError: null });
     try {
       const created = await userService.create({ username, password, role });
-      this.$updateState({
-        users: [...this.state.users, created],
+      Object.assign(this.data, {
+        users: [...this.data.users, created],
         createOpen: false,
         createSubmitting: false,
       });
       return true;
     } catch (err) {
-      this.$updateState({
+      Object.assign(this.data, {
         createSubmitting: false,
         createError: err instanceof ApiError ? err.message : 'Create failed',
       });
@@ -133,26 +133,26 @@ export class UsersViewModel extends BaseViewModel<State> {
   // --- Delete dialog --------------------------------------------------
 
   askDelete(u: UserView) {
-    this.$updateState({ deleteTarget: u });
+    this.data.deleteTarget = u;
   }
 
   cancelDelete() {
-    this.$updateState({ deleteTarget: null });
+    this.data.deleteTarget = null;
   }
 
   async confirmDelete(): Promise<void> {
-    const target = this.state.deleteTarget;
+    const target = this.data.deleteTarget;
     if (!target) return;
-    this.$updateState({ deleteSubmitting: true });
+    this.data.deleteSubmitting = true;
     try {
       await userService.remove(target.id);
-      this.$updateState({
-        users: this.state.users.filter((u) => u.id !== target.id),
+      Object.assign(this.data, {
+        users: this.data.users.filter((u) => u.id !== target.id),
         deleteTarget: null,
         deleteSubmitting: false,
       });
     } catch (err) {
-      this.$updateState({
+      Object.assign(this.data, {
         deleteSubmitting: false,
         deleteTarget: null,
         error: err instanceof ApiError ? err.message : 'Delete failed',
@@ -165,13 +165,9 @@ export class UsersViewModel extends BaseViewModel<State> {
   async toggleDisabled(u: UserView) {
     try {
       const updated = await userService.update(u.id, { disabled: !u.disabled });
-      this.$updateState({
-        users: this.state.users.map((x) => (x.id === u.id ? updated : x)),
-      });
+      this.data.users = this.data.users.map((x) => (x.id === u.id ? updated : x));
     } catch (err) {
-      this.$updateState({
-        error: err instanceof ApiError ? err.message : 'Update failed',
-      });
+      this.data.error = err instanceof ApiError ? err.message : 'Update failed';
     }
   }
 
@@ -180,21 +176,19 @@ export class UsersViewModel extends BaseViewModel<State> {
     if (u.role === role) return;
     try {
       const updated = await userService.update(u.id, { role });
-      this.$updateState({
-        users: this.state.users.map((x) => (x.id === u.id ? updated : x)),
+      Object.assign(this.data, {
+        users: this.data.users.map((x) => (x.id === u.id ? updated : x)),
         error: null,
       });
     } catch (err) {
-      this.$updateState({
-        error: err instanceof ApiError ? err.message : 'Role change failed',
-      });
+      this.data.error = err instanceof ApiError ? err.message : 'Role change failed';
     }
   }
 
   // --- Password reset (admin-driven) ---------------------------------
 
   askResetPassword(u: UserView) {
-    this.$updateState({
+    Object.assign(this.data, {
       pwTarget: u,
       pwForm: { newPassword: '' },
       pwError: null,
@@ -202,28 +196,28 @@ export class UsersViewModel extends BaseViewModel<State> {
   }
 
   cancelResetPassword() {
-    this.$updateState({ pwTarget: null, pwError: null });
+    Object.assign(this.data, { pwTarget: null, pwError: null });
   }
 
   setPwField<K extends keyof State['pwForm']>(k: K, v: State['pwForm'][K]) {
-    this.$updateState({ pwForm: { ...this.state.pwForm, [k]: v } });
+    this.data.pwForm = { ...this.data.pwForm, [k]: v };
   }
 
   async submitResetPassword(): Promise<boolean> {
-    const target = this.state.pwTarget;
+    const target = this.data.pwTarget;
     if (!target) return false;
-    const { newPassword } = this.state.pwForm;
+    const { newPassword } = this.data.pwForm;
     if (newPassword.length < 8) {
-      this.$updateState({ pwError: 'Password must be at least 8 characters' });
+      this.data.pwError = 'Password must be at least 8 characters';
       return false;
     }
-    this.$updateState({ pwSubmitting: true, pwError: null });
+    Object.assign(this.data, { pwSubmitting: true, pwError: null });
     try {
       await userService.setPassword(target.id, { new_password: newPassword });
-      this.$updateState({ pwTarget: null, pwSubmitting: false });
+      Object.assign(this.data, { pwTarget: null, pwSubmitting: false });
       return true;
     } catch (err) {
-      this.$updateState({
+      Object.assign(this.data, {
         pwSubmitting: false,
         pwError: err instanceof ApiError ? err.message : 'Password reset failed',
       });
@@ -234,7 +228,7 @@ export class UsersViewModel extends BaseViewModel<State> {
   // --- Permissions drawer --------------------------------------------
 
   async openPermissions(u: UserView) {
-    this.$updateState({
+    Object.assign(this.data, {
       permsTarget: u,
       permsLoading: true,
       permsError: null,
@@ -245,9 +239,9 @@ export class UsersViewModel extends BaseViewModel<State> {
     });
     try {
       const { items } = await permissionService.listForUser(u.id);
-      this.$updateState({ perms: items, permsLoading: false });
+      Object.assign(this.data, { perms: items, permsLoading: false });
     } catch (err) {
-      this.$updateState({
+      Object.assign(this.data, {
         permsLoading: false,
         permsError: err instanceof ApiError ? err.message : 'Failed to load permissions',
       });
@@ -255,7 +249,7 @@ export class UsersViewModel extends BaseViewModel<State> {
   }
 
   closePermissions() {
-    this.$updateState({
+    Object.assign(this.data, {
       permsTarget: null,
       perms: [],
       permsError: null,
@@ -266,33 +260,33 @@ export class UsersViewModel extends BaseViewModel<State> {
   }
 
   setPermsAddText(text: string) {
-    this.$updateState({ permsAddText: text });
+    this.data.permsAddText = text;
   }
 
   async submitAddPatterns(): Promise<void> {
-    const target = this.state.permsTarget;
+    const target = this.data.permsTarget;
     if (!target) return;
     // Split on comma and whitespace (incl. newlines); strip empties.
-    const patterns = this.state.permsAddText
+    const patterns = this.data.permsAddText
       .split(/[,\s]+/)
       .map((p) => p.trim())
       .filter(Boolean);
     if (patterns.length === 0) {
-      this.$updateState({ permsError: 'Enter at least one pattern' });
+      this.data.permsError = 'Enter at least one pattern';
       return;
     }
-    this.$updateState({ permsAddSubmitting: true, permsError: null });
+    Object.assign(this.data, { permsAddSubmitting: true, permsError: null });
     try {
       await permissionService.grantBatch(target.id, patterns);
       // Refetch so the list reflects server-side ordering + any prior dups.
       const { items } = await permissionService.listForUser(target.id);
-      this.$updateState({
+      Object.assign(this.data, {
         perms: items,
         permsAddText: '',
         permsAddSubmitting: false,
       });
     } catch (err) {
-      this.$updateState({
+      Object.assign(this.data, {
         permsAddSubmitting: false,
         permsError: err instanceof ApiError ? err.message : 'Grant failed',
       });
@@ -300,36 +294,36 @@ export class UsersViewModel extends BaseViewModel<State> {
   }
 
   startEditPattern(p: PermissionView) {
-    this.$updateState({ permsEditingId: p.id, permsEditText: p.repo_pattern });
+    Object.assign(this.data, { permsEditingId: p.id, permsEditText: p.repo_pattern });
   }
 
   cancelEditPattern() {
-    this.$updateState({ permsEditingId: null, permsEditText: '' });
+    Object.assign(this.data, { permsEditingId: null, permsEditText: '' });
   }
 
   setPermsEditText(text: string) {
-    this.$updateState({ permsEditText: text });
+    this.data.permsEditText = text;
   }
 
   async submitEditPattern(): Promise<void> {
-    const id = this.state.permsEditingId;
+    const id = this.data.permsEditingId;
     if (id == null) return;
-    const pattern = this.state.permsEditText.trim();
+    const pattern = this.data.permsEditText.trim();
     if (!pattern) {
-      this.$updateState({ permsError: 'Pattern cannot be empty' });
+      this.data.permsError = 'Pattern cannot be empty';
       return;
     }
-    this.$updateState({ permsRowBusyId: id, permsError: null });
+    Object.assign(this.data, { permsRowBusyId: id, permsError: null });
     try {
       await permissionService.update(id, pattern);
-      this.$updateState({
-        perms: this.state.perms.map((p) => (p.id === id ? { ...p, repo_pattern: pattern } : p)),
+      Object.assign(this.data, {
+        perms: this.data.perms.map((p) => (p.id === id ? { ...p, repo_pattern: pattern } : p)),
         permsEditingId: null,
         permsEditText: '',
         permsRowBusyId: null,
       });
     } catch (err) {
-      this.$updateState({
+      Object.assign(this.data, {
         permsRowBusyId: null,
         permsError: err instanceof ApiError ? err.message : 'Update failed',
       });
@@ -337,15 +331,15 @@ export class UsersViewModel extends BaseViewModel<State> {
   }
 
   async revokePermission(p: PermissionView): Promise<void> {
-    this.$updateState({ permsRowBusyId: p.id, permsError: null });
+    Object.assign(this.data, { permsRowBusyId: p.id, permsError: null });
     try {
       await permissionService.revoke(p.id);
-      this.$updateState({
-        perms: this.state.perms.filter((x) => x.id !== p.id),
+      Object.assign(this.data, {
+        perms: this.data.perms.filter((x) => x.id !== p.id),
         permsRowBusyId: null,
       });
     } catch (err) {
-      this.$updateState({
+      Object.assign(this.data, {
         permsRowBusyId: null,
         permsError: err instanceof ApiError ? err.message : 'Revoke failed',
       });

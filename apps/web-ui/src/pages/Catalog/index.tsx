@@ -5,7 +5,7 @@
  * search, pagination) is a single HTTP call with fully-populated rows.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -19,12 +19,13 @@ import {
   Package,
   RefreshCw,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { copyText } from '@bizjs/biz-utils';
 import { toast } from 'sonner';
 
-import { useViewModel } from '@/lib/viewmodel';
+import { useViewModel } from 'bizify';
 import { CatalogViewModel, type SortField } from './view-model';
+import { serializeCatalogParams } from './url-state';
 import { SearchBar } from '@/components/common/SearchBar';
 import { formatBinarySize, formatDateTime } from '@/utils';
 import { compactArchLabel, formatPlatform } from '../TagList/platforms';
@@ -68,7 +69,23 @@ function singlePlatformLabel(p: OverviewPlatform): string {
 
 export default function Catalog() {
   const vm = useViewModel(CatalogViewModel);
-  const snapshot = vm.$useSnapshot();
+  const snapshot = vm.useSnapshot();
+  const [, setSearchParams] = useSearchParams();
+
+  // Mirror search / sort / pagination into the URL so it's the single
+  // source of truth — surviving back-navigation from a tag-list, a
+  // hard refresh, and bookmarks. The VM hydrates from the URL on
+  // construct, so on mount this computes a no-op (next === current) and
+  // skips the write. `replace` keeps these param tweaks out of the
+  // history stack so Back returns to wherever the user came from rather
+  // than stepping through every sort toggle.
+  const { searchQuery, sort, sortDirection, page, pageSize } = snapshot;
+  useEffect(() => {
+    const next = serializeCatalogParams({ searchQuery, sort, sortDirection, page, pageSize });
+    if (next.toString() !== new URLSearchParams(window.location.search).toString()) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchQuery, sort, sortDirection, page, pageSize, setSearchParams]);
 
   // Track which row's copy button was most recently clicked so the
   // icon swaps Copy → Check for ~1.5s as immediate visual feedback

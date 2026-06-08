@@ -5,13 +5,14 @@
  * params and the server's paged response. No more per-row meta fan-out.
  */
 
-import { BaseViewModel, type ViewModelLifecycle } from '@/lib/viewmodel/BaseViewModel';
+import { ViewModelBase } from 'bizify';
 import {
   getOverview,
   type OverviewItem,
   type OverviewSortDirection,
   type OverviewSortField,
 } from '@/services/registry.service';
+import { CATALOG_DEFAULTS, parseCatalogParams } from './url-state';
 
 export type SortField = OverviewSortField;
 export type SortDirection = OverviewSortDirection;
@@ -30,33 +31,33 @@ interface ViewState {
 
 const SEARCH_DEBOUNCE_MS = 300;
 
-export class CatalogViewModel extends BaseViewModel<ViewState> implements ViewModelLifecycle {
+export class CatalogViewModel extends ViewModelBase<ViewState> {
   // Incrementing request token so out-of-order responses (user types
   // fast, older request resolves later) don't clobber newer data.
   private reqSeq = 0;
   // Pending debounced search fetch, if any — reset on every keystroke.
   private searchTimer?: ReturnType<typeof setTimeout>;
 
-  constructor() {
-    super({
+  protected $data(): ViewState {
+    // Hydrate search / sort / pagination from the URL so the state
+    // survives drilling into a tag-list and back, a hard refresh, and
+    // bookmarks. parseCatalogParams drops invalid values, so anything
+    // missing or malformed falls back to CATALOG_DEFAULTS — which carry
+    // the newest-first default that opens the page on recent activity.
+    // (Switching columns reverts to each column's natural direction;
+    // see toggleSort.)
+    return {
       items: [],
       total: 0,
-      searchQuery: '',
-      // Default to newest-first so the page opens on the activity
-      // operators care about — recently pushed images sit at the top.
-      // Switching columns reverts to each column's natural direction
-      // (see toggleSort).
-      sort: 'updated',
-      sortDirection: 'desc',
-      page: 0,
-      pageSize: 50,
+      ...CATALOG_DEFAULTS,
+      ...parseCatalogParams(window.location.search),
       loading: true,
       error: null,
-    });
+    };
   }
 
-  async $onMounted() {
-    await this.fetch();
+  protected onMount() {
+    void this.fetch();
   }
 
   /**
@@ -66,24 +67,24 @@ export class CatalogViewModel extends BaseViewModel<ViewState> implements ViewMo
    */
   private async fetch() {
     const mySeq = ++this.reqSeq;
-    this.$updateState({ loading: true, error: null });
+    Object.assign(this.data, { loading: true, error: null });
     try {
       const resp = await getOverview({
-        page: this.state.page,
-        pageSize: this.state.pageSize,
-        sort: this.state.sort,
-        direction: this.state.sortDirection,
-        q: this.state.searchQuery || undefined,
+        page: this.data.page,
+        pageSize: this.data.pageSize,
+        sort: this.data.sort,
+        direction: this.data.sortDirection,
+        q: this.data.searchQuery || undefined,
       });
       if (mySeq !== this.reqSeq) return;
-      this.$updateState({
+      Object.assign(this.data, {
         items: resp.items,
         total: resp.total,
         loading: false,
       });
     } catch (err) {
       if (mySeq !== this.reqSeq) return;
-      this.$updateState({
+      Object.assign(this.data, {
         loading: false,
         error: err instanceof Error ? err.message : 'Failed to load repositories',
       });
@@ -96,7 +97,7 @@ export class CatalogViewModel extends BaseViewModel<ViewState> implements ViewMo
     // every keystroke. Jump back to page 0 on any filter change so
     // users don't land on page 3 of a narrowed-down result with
     // nothing showing.
-    this.$updateState({ searchQuery: query, page: 0 });
+    Object.assign(this.data, { searchQuery: query, page: 0 });
     if (this.searchTimer) clearTimeout(this.searchTimer);
     this.searchTimer = setTimeout(() => {
       void this.fetch();
@@ -104,15 +105,15 @@ export class CatalogViewModel extends BaseViewModel<ViewState> implements ViewMo
   }
 
   toggleSort(field: SortField) {
-    if (this.state.sort === field) {
-      this.$updateState({
-        sortDirection: this.state.sortDirection === 'asc' ? 'desc' : 'asc',
+    if (this.data.sort === field) {
+      Object.assign(this.data, {
+        sortDirection: this.data.sortDirection === 'asc' ? 'desc' : 'asc',
         page: 0,
       });
     } else {
       // Column-appropriate default direction: asc for name (A→Z),
       // desc for numeric / temporal columns (biggest/newest first).
-      this.$updateState({
+      Object.assign(this.data, {
         sort: field,
         sortDirection: field === 'name' ? 'asc' : 'desc',
         page: 0,
@@ -123,13 +124,13 @@ export class CatalogViewModel extends BaseViewModel<ViewState> implements ViewMo
   }
 
   setPage(page: number) {
-    this.$updateState({ page: Math.max(0, page) });
+    this.data.page = Math.max(0, page);
     this.cancelSearchDebounce();
     void this.fetch();
   }
 
   setPageSize(pageSize: number) {
-    this.$updateState({ pageSize, page: 0 });
+    Object.assign(this.data, { pageSize, page: 0 });
     this.cancelSearchDebounce();
     void this.fetch();
   }

@@ -1,4 +1,4 @@
-import { BaseViewModel } from '@/lib/viewmodel/BaseViewModel';
+import { ViewModelBase } from 'bizify';
 import { currentUserViewModel } from '@/hooks/use-current-user';
 import { ApiError } from '@/services/api';
 
@@ -9,34 +9,34 @@ interface State {
   error: string | null;
 }
 
-export class LoginViewModel extends BaseViewModel<State> {
-  constructor() {
-    super({ username: '', password: '', submitting: false, error: null });
+export class LoginViewModel extends ViewModelBase<State> {
+  protected $data(): State {
+    return { username: '', password: '', submitting: false, error: null };
   }
 
   setUsername(username: string) {
-    this.$updateState({ username, error: null });
+    Object.assign(this.data, { username, error: null });
   }
 
   setPassword(password: string) {
-    this.$updateState({ password, error: null });
+    Object.assign(this.data, { password, error: null });
   }
 
   /** Returns true on success so the page component can navigate. */
   async submit(): Promise<boolean> {
-    const { username, password } = this.state;
+    const { username, password } = this.data;
     if (!username || !password) {
-      this.$updateState({ error: 'Username and password are required' });
+      this.data.error = 'Username and password are required';
       return false;
     }
-    this.$updateState({ submitting: true, error: null });
+    Object.assign(this.data, { submitting: true, error: null });
     try {
       await currentUserViewModel.login(username, password);
-      this.$updateState({ submitting: false });
+      this.data.submitting = false;
       return true;
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Login failed';
-      this.$updateState({ submitting: false, error: msg });
+      Object.assign(this.data, { submitting: false, error: msg });
       return false;
     }
   }

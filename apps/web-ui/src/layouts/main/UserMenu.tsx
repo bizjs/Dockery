@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { LogOut, User as UserIcon, Users as UsersIcon, Key, Wrench, ScrollText } from 'lucide-react';
 
-import { useViewModel } from '@/lib/viewmodel';
 import { currentUserViewModel } from '@/hooks/use-current-user';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,8 +28,7 @@ import { ApiError } from '@/services/api';
 /** Header-embedded user menu: shows current user, admin links, self-service
  *  password change, and logout. */
 export function UserMenu() {
-  const vm = useViewModel(currentUserViewModel);
-  const s = vm.$useSnapshot();
+  const s = currentUserViewModel.useSnapshot();
   const navigate = useNavigate();
 
   const [pwOpen, setPwOpen] = useState(false);
@@ -47,7 +45,7 @@ export function UserMenu() {
   const user = s.user;
 
   async function doLogout() {
-    await vm.logout();
+    await currentUserViewModel.logout();
     navigate('/login', { replace: true });
   }
 
@@ -98,7 +96,7 @@ export function UserMenu() {
         <DropdownMenuContent align="end" className="w-52">
           <DropdownMenuLabel>Signed in as {user.username}</DropdownMenuLabel>
           <DropdownMenuSeparator />
-          {vm.isAdmin && (
+          {currentUserViewModel.isAdmin && (
             <>
               <DropdownMenuItem asChild>
                 <Link to="/admin/users" className="cursor-pointer">

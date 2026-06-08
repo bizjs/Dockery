@@ -1,7 +1,7 @@
 import type React from 'react';
 import { Trash2, Plus, Key, Shield, X } from 'lucide-react';
 
-import { useViewModel } from '@/lib/viewmodel';
+import { useViewModel } from 'bizify';
 import { UsersViewModel } from './view-model';
 import { currentUserViewModel } from '@/hooks/use-current-user';
 import { Button } from '@/components/ui/button';
@@ -56,9 +56,8 @@ function formatDate(ts: number) {
 
 export default function UsersPage() {
   const vm = useViewModel(UsersViewModel);
-  const s = vm.$useSnapshot();
-  const meVm = useViewModel(currentUserViewModel);
-  const me = meVm.$useSnapshot().user;
+  const s = vm.useSnapshot();
+  const me = currentUserViewModel.useSnapshot().user;
 
   async function onCreateSubmit(e: React.SubmitEvent) {
     e.preventDefault();
