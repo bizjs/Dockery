@@ -584,6 +584,13 @@ func (s *RegistryService) TagDetails(ctx *router.Context) error {
 
 	items := make([]TagDetail, len(tags))
 	sem := make(chan struct{}, tagDetailConcurrency)
+	// Separate pool for manifest-list child fetches. Without it, total
+	// upstream concurrency would be 12 × (entries per manifest list) —
+	// and the entry count is pusher-controlled. A distinct pool (NOT the
+	// outer sem: an outer goroutine holding a slot while its children
+	// wait on the same pool would deadlock once all slots are held by
+	// waiting parents) caps the whole request at 12 tags + 12 children.
+	childSem := make(chan struct{}, tagDetailConcurrency)
 	var wg sync.WaitGroup
 	for i, tag := range tags {
 		wg.Add(1)
@@ -591,7 +598,7 @@ func (s *RegistryService) TagDetails(ctx *router.Context) error {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			items[i] = s.buildTagDetail(ctx.Context(), name, tag)
+			items[i] = s.buildTagDetail(ctx.Context(), name, tag, childSem)
 		}(i, tag)
 	}
 	wg.Wait()
@@ -602,8 +609,9 @@ func (s *RegistryService) TagDetails(ctx *router.Context) error {
 // buildTagDetail resolves one tag to its TagDetail. Best-effort: a tag
 // whose manifest fetch fails comes back with just its name + zero size
 // (mirrors the frontend's prior per-tag fallback) so one bad tag never
-// fails the whole page.
-func (s *RegistryService) buildTagDetail(ctx context.Context, repo, tag string) TagDetail {
+// fails the whole page. childSem bounds the per-platform child fetches
+// across the whole request (see TagDetails).
+func (s *RegistryService) buildTagDetail(ctx context.Context, repo, tag string, childSem chan struct{}) TagDetail {
 	d := TagDetail{ImageName: repo, Tag: tag}
 	m, err := s.fetcher.Manifest(ctx, repo, tag)
 	if err != nil {
@@ -631,6 +639,8 @@ func (s *RegistryService) buildTagDetail(ctx context.Context, repo, tag string) 
 			wg.Add(1)
 			go func(i int, digest string) {
 				defer wg.Done()
+				childSem <- struct{}{}
+				defer func() { <-childSem }()
 				metas[i] = s.fetcher.ChildMeta(ctx, repo, digest)
 			}(i, e.Digest)
 		}

@@ -135,7 +135,12 @@ func (s *WebhookService) Handle(ctx *router.Context) error {
 	// vendor type and 500s. The payload is plain JSON regardless of the
 	// header, so read and unmarshal it ourselves and stay
 	// content-type-agnostic.
-	body, err := io.ReadAll(ctx.Request().Body)
+	//
+	// LimitReader caps the buffered body — real distribution envelopes
+	// are a few KB, so 1 MiB is generous headroom while keeping a rogue
+	// loopback caller from forcing an arbitrary-size allocation. An
+	// oversized payload truncates and fails the Unmarshal below as a 400.
+	body, err := io.ReadAll(io.LimitReader(ctx.Request().Body, 1<<20))
 	if err != nil {
 		return response.ErrBadRequest.WithMessage("read request body")
 	}

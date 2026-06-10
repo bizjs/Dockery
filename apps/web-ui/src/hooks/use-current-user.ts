@@ -22,6 +22,10 @@ interface State {
  */
 export class CurrentUserViewModel extends ViewModelBase<State> {
   private bootstrapped = false;
+  // Request-sequence token (same pattern as CatalogViewModel): login()
+  // and logout() bump it so a still-in-flight /me from bootstrap can't
+  // land late and overwrite the fresher auth state.
+  private reqSeq = 0;
 
   protected $data(): State {
     return { user: null, loading: false, initialized: false };
@@ -36,11 +40,14 @@ export class CurrentUserViewModel extends ViewModelBase<State> {
   }
 
   async refresh(): Promise<void> {
+    const mySeq = ++this.reqSeq;
     this.data.loading = true;
     try {
       const user = await authService.me();
+      if (mySeq !== this.reqSeq) return;
       Object.assign(this.data, { user, loading: false, initialized: true });
     } catch (err) {
+      if (mySeq !== this.reqSeq) return;
       if (err instanceof ApiError && err.status === 401) {
         Object.assign(this.data, { user: null, loading: false, initialized: true });
         return;
@@ -52,6 +59,9 @@ export class CurrentUserViewModel extends ViewModelBase<State> {
 
   async login(username: string, password: string): Promise<void> {
     const user = await authService.login(username, password);
+    // Invalidate any in-flight /me so its (possibly 401) result can't
+    // overwrite the fresh login state.
+    this.reqSeq++;
     Object.assign(this.data, { user, initialized: true });
   }
 
@@ -59,6 +69,9 @@ export class CurrentUserViewModel extends ViewModelBase<State> {
     try {
       await authService.logout();
     } finally {
+      // Same invalidation in reverse: a stale /me must not resurrect
+      // the user after an explicit logout.
+      this.reqSeq++;
       this.data.user = null;
     }
   }

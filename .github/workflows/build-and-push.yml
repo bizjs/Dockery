@@ -66,9 +66,15 @@ jobs:
 
       - name: Resolve release tag
         id: resolve
+        # inputs.tag goes through env (not ${{ }} inline in the script):
+        # inline interpolation happens before the shell runs, so a crafted
+        # input like `1.0.0$(…)` would be executed. Env indirection keeps
+        # it data. (The "Push git tag" step below already does the same.)
+        env:
+          RAW_TAG: ${{ inputs.tag }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=v${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "tag=v$RAW_TAG" >> "$GITHUB_OUTPUT"
           else
             echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
           fi
