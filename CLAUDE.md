@@ -24,7 +24,7 @@ Not in repo yet (planned): pnpm workspace root.
 
 ```bash
 pnpm install
-pnpm dev              # Vite on :5173; proxies /api /token → :5001, /v2 → :5000
+pnpm dev              # Vite on :5173; proxies /api /token /v2 → :5001 (make dev stack or make run api)
 pnpm build            # tsc -b && vite build
 pnpm lint
 pnpm test             # vitest (jsdom)

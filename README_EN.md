@@ -186,15 +186,15 @@ Three in-container processes managed by supervisord. Full design in [`docs/docke
 ## Local development
 
 ```bash
-# Frontend (:5173)
+# Full backend stack (api + registry + nginx on :5001, built from source)
+make dev DOCKERY_ADMIN_PASSWORD='change-me'
+
+# Frontend with hot reload (:5173; /api /token /v2 all proxy to :5001)
 cd apps/web-ui && pnpm install && pnpm dev
-
-# Backend (:5001)
-cd apps/api && make run
-
-# Bare registry (:5000) for the frontend's /v2 proxy
-docker run -p 5000:5000 distribution/distribution:3.1.0
 ```
+
+For Go-only iteration you can also run the api bare-metal with
+`cd apps/api && make run` (also binds :5001 — use it *instead of* `make dev`, not alongside).
 
 ## Release
 

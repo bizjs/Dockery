@@ -186,15 +186,14 @@ volumes:
 ## 本地开发
 
 ```bash
-# 前端（:5173）
+# 整套后端（api + registry + nginx，:5001，从源码构建）
+make dev DOCKERY_ADMIN_PASSWORD='change-me'
+
+# 前端热重载（:5173，/api /token /v2 都代理到 :5001）
 cd apps/web-ui && pnpm install && pnpm dev
-
-# 后端（:5001）
-cd apps/api && make run
-
-# 裸 registry（:5000），给前端 /v2 代理用
-docker run -p 5000:5000 distribution/distribution:3.1.0
 ```
+
+只改 Go 代码时也可以裸跑 `cd apps/api && make run`（同样监听 :5001，与 `make dev` 二选一）。
 
 ## 发布
 

@@ -43,27 +43,21 @@
 **A. 本地 build + 跑**(适合二次定制):
 
 ```bash
-git clone https://github.com/bizjs/light-registry.git dockery && cd dockery
-export DOCKERY_ADMIN_PASSWORD='change-me-on-first-boot'
-docker compose up --build -d
+git clone https://github.com/bizjs/Dockery.git dockery && cd dockery
+make dev DOCKERY_ADMIN_PASSWORD='change-me-on-first-boot'
 ```
+
+(`make dev` 包装 `docker compose -f docker-compose.dev.yaml up --build -d`,从源码构建
+all-in-one 镜像并整套跑起来;`make dev-logs` / `make dev-down` / `make dev-reset` 管理生命周期。)
 
 **B. 拉 GHCR 镜像**(适合纯部署):
 
 ```bash
-curl -O https://raw.githubusercontent.com/bizjs/light-registry/main/docker-compose.ghcr.yml
+curl -O https://raw.githubusercontent.com/bizjs/Dockery/main/docker-compose.ghcr.yml
 export DOCKERY_ADMIN_PASSWORD='change-me-on-first-boot'
 export REGISTRY_AUTH_TOKEN_REALM='https://registry.example.com/token'   # 生产必改
 docker compose -f docker-compose.ghcr.yml pull
 docker compose -f docker-compose.ghcr.yml up -d
-```
-
-**C. 开发模式**(前端跑 Vite、后端跑 `make run`、registry 跑裸容器):
-
-```bash
-docker compose -f docker-compose.dev.yaml up -d        # 只起 :5000 的 registry
-cd apps/api && make run                                # :5001
-cd apps/web-ui && pnpm install && pnpm dev             # :5173
 ```
 
 访问 http://localhost:5001 — 用 `admin` / 上面设置的密码登录。
@@ -335,7 +329,7 @@ SQLite schema 会自动 migrate(`ent.Schema.Create` 幂等)。密钥持久化在
 **回滚**:
 
 ```bash
-export DOCKERY_IMAGE=ghcr.io/bizjs/light-registry:v0.1.0
+export DOCKERY_IMAGE=ghcr.io/bizjs/dockery:0.8.0
 docker compose -f docker-compose.ghcr.yml up -d
 ```
 
