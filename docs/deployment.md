@@ -333,7 +333,7 @@ export DOCKERY_IMAGE=ghcr.io/bizjs/dockery:0.8.0
 docker compose -f docker-compose.ghcr.yml up -d
 ```
 
-`DOCKERY_IMAGE` 就是 `docker-compose.ghcr.yml` 里用来拉镜像的变量,不指定就是 `:latest`。**生产请锁版本**(`:v0.1.x`),不要跟 `:latest`。
+`DOCKERY_IMAGE` 就是 `docker-compose.ghcr.yml` 里用来拉镜像的变量,不指定就是 `:latest`。**生产请锁版本**(如 `:0.9.0`,镜像 tag 不带 `v` 前缀),不要跟 `:latest`。
 
 **schema 降级**:ent auto-migrate 只加不删,回滚老版本通常没问题。但新版本若加了非空字段,回滚后会卡在 "column not found"。出现这种断层会在 release note 里明确标注,届时 restore 备份再启老版本。
 
