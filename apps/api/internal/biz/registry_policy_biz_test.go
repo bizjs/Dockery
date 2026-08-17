@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
 	"api/internal/data/ent"
+	"api/internal/data/ent/systemsetting"
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
@@ -45,24 +47,94 @@ func TestRegistryPolicyInitializeAndUpdate(t *testing.T) {
 	if initial.PreventTagOverwrite || initial.Version != 0 || initial.UpdatedBy != "system" {
 		t.Fatalf("unexpected default policy: %+v", initial)
 	}
+	if len(initial.OverwriteExclusions) != 0 {
+		t.Fatalf("default policy exclusions = %v, want empty", initial.OverwriteExclusions)
+	}
 
-	updated, err := uc.Update(context.Background(), 0, true, "admin")
+	updated, err := uc.Update(context.Background(), 0, true, []string{"latest"}, "admin")
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if !updated.PreventTagOverwrite || updated.Version != 1 || updated.UpdatedBy != "admin" {
+	if !updated.PreventTagOverwrite || !slices.Equal(updated.OverwriteExclusions, []string{"latest"}) ||
+		updated.Version != 1 || updated.UpdatedBy != "admin" {
 		t.Fatalf("unexpected updated policy: %+v", updated)
 	}
+	exclusionsSetting, err := client.SystemSetting.Query().
+		Where(systemsetting.KeyEQ(SettingKeyOverwriteExclusions)).
+		Only(context.Background())
+	if err != nil {
+		t.Fatalf("query persisted exclusions: %v", err)
+	}
+	if string(exclusionsSetting.Value) != `["latest"]` || exclusionsSetting.Version != 1 {
+		t.Fatalf("unexpected persisted exclusions: %+v", exclusionsSetting)
+	}
 
-	idempotent, err := uc.Update(context.Background(), 1, true, "other-admin")
+	idempotent, err := uc.Update(context.Background(), 1, true, []string{"latest"}, "other-admin")
 	if err != nil {
 		t.Fatalf("idempotent update: %v", err)
 	}
 	if idempotent.Version != 1 || idempotent.UpdatedBy != "admin" {
 		t.Fatalf("idempotent update changed metadata: %+v", idempotent)
 	}
-	if _, err := uc.Update(context.Background(), 0, false, "admin"); !errors.Is(err, ErrRegistryPolicyConflict) {
+	if _, err := uc.Update(context.Background(), 0, false, nil, "admin"); !errors.Is(err, ErrRegistryPolicyConflict) {
 		t.Fatalf("stale update error = %v, want conflict", err)
+	}
+}
+
+func TestRegistryPolicyLoadsLegacyBooleanAndNormalizesExclusions(t *testing.T) {
+	client := newPolicyTestClient(t)
+	if _, err := client.SystemSetting.Create().
+		SetKey(SettingKeyPreventTagOverwrite).
+		SetValue(json.RawMessage("true")).
+		SetVersion(4).
+		SetUpdatedBy("old-version").
+		Save(context.Background()); err != nil {
+		t.Fatalf("seed legacy boolean: %v", err)
+	}
+	uc := NewRegistryPolicyBiz(client)
+	if err := uc.Initialize(context.Background()); err != nil {
+		t.Fatalf("initialize legacy setting: %v", err)
+	}
+	loaded, err := uc.Get()
+	if err != nil {
+		t.Fatalf("get legacy setting: %v", err)
+	}
+	if !loaded.PreventTagOverwrite || loaded.Version != 4 || len(loaded.OverwriteExclusions) != 0 {
+		t.Fatalf("unexpected legacy policy: %+v", loaded)
+	}
+
+	updated, err := uc.Update(context.Background(), 4, true, []string{"nightly", " latest ", "latest"}, "admin")
+	if err != nil {
+		t.Fatalf("add exclusions to legacy policy: %v", err)
+	}
+	if updated.Version != 5 || !slices.Equal(updated.OverwriteExclusions, []string{"latest", "nightly"}) {
+		t.Fatalf("unexpected normalized policy: %+v", updated)
+	}
+	primary, err := client.SystemSetting.Query().
+		Where(systemsetting.KeyEQ(SettingKeyPreventTagOverwrite)).
+		Only(context.Background())
+	if err != nil {
+		t.Fatalf("reload primary setting: %v", err)
+	}
+	if string(primary.Value) != "true" {
+		t.Fatalf("primary value changed format: %s", primary.Value)
+	}
+}
+
+func TestRegistryPolicyRejectsInvalidOverwriteExclusion(t *testing.T) {
+	uc := NewRegistryPolicyBiz(newPolicyTestClient(t))
+	if err := uc.Initialize(context.Background()); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	if _, err := uc.Update(context.Background(), 0, true, []string{"release/*"}, "admin"); !errors.Is(err, ErrRegistryPolicyInvalid) {
+		t.Fatalf("invalid exclusion error = %v, want ErrRegistryPolicyInvalid", err)
+	}
+	current, err := uc.Get()
+	if err != nil {
+		t.Fatalf("get after invalid update: %v", err)
+	}
+	if current.Version != 0 {
+		t.Fatalf("invalid update changed policy: %+v", current)
 	}
 }
 
@@ -85,6 +157,33 @@ func TestRegistryPolicyRejectsNonBooleanJSON(t *testing.T) {
 	}
 }
 
+func TestRegistryPolicyRejectsInvalidPersistedExclusions(t *testing.T) {
+	for _, value := range []string{"null", `"latest"`, `["release/*"]`} {
+		t.Run(value, func(t *testing.T) {
+			client := newPolicyTestClient(t)
+			if _, err := client.SystemSetting.Create().
+				SetKey(SettingKeyPreventTagOverwrite).
+				SetValue(json.RawMessage("true")).
+				SetVersion(1).
+				SetUpdatedBy("admin").
+				Save(context.Background()); err != nil {
+				t.Fatalf("seed primary setting: %v", err)
+			}
+			if _, err := client.SystemSetting.Create().
+				SetKey(SettingKeyOverwriteExclusions).
+				SetValue(json.RawMessage(value)).
+				SetVersion(1).
+				SetUpdatedBy("admin").
+				Save(context.Background()); err != nil {
+				t.Fatalf("seed exclusions setting: %v", err)
+			}
+			if err := NewRegistryPolicyBiz(client).Initialize(context.Background()); err == nil {
+				t.Fatalf("Initialize accepted invalid exclusions JSON %s", value)
+			}
+		})
+	}
+}
+
 func TestRegistryPolicySwitchWaitsForActivePut(t *testing.T) {
 	uc := NewRegistryPolicyBiz(newPolicyTestClient(t))
 	if err := uc.Initialize(context.Background()); err != nil {
@@ -97,7 +196,7 @@ func TestRegistryPolicySwitchWaitsForActivePut(t *testing.T) {
 
 	updateDone := make(chan error, 1)
 	go func() {
-		_, updateErr := uc.Update(context.Background(), 0, true, "admin")
+		_, updateErr := uc.Update(context.Background(), 0, true, nil, "admin")
 		updateDone <- updateErr
 	}()
 	select {

@@ -98,7 +98,7 @@ func TestSystemSettingSchemaAutoMigratesOldDatabase(t *testing.T) {
 		t.Fatalf("startup wrote a default row: count=%d err=%v", count, err)
 	}
 
-	updated, err := policy.Update(ctx, 0, true, "admin")
+	updated, err := policy.Update(ctx, 0, true, nil, "admin")
 	if err != nil {
 		t.Fatalf("first administrator update: %v", err)
 	}

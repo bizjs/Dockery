@@ -10,6 +10,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -531,19 +532,21 @@ func TestRegistryPolicyAdminAPIIsDynamicAndVersioned(t *testing.T) {
 		t.Fatalf("get policy want 200, got %d; body=%s", resp.StatusCode, raw)
 	}
 	var current struct {
-		Prevent bool  `json:"prevent_tag_overwrite"`
-		Version int64 `json:"version"`
+		Prevent    bool     `json:"prevent_tag_overwrite"`
+		Exclusions []string `json:"overwrite_exclusions"`
+		Version    int64    `json:"version"`
 	}
 	env := h.decode(raw)
 	if err := json.Unmarshal(env.Data, &current); err != nil {
 		t.Fatalf("decode policy: %v", err)
 	}
-	if current.Prevent || current.Version != 0 {
+	if current.Prevent || current.Version != 0 || len(current.Exclusions) != 0 {
 		t.Fatalf("unexpected default policy: %+v", current)
 	}
 
 	resp, raw = h.do(http.MethodPatch, "/api/admin/registry-policy", map[string]any{
 		"prevent_tag_overwrite": true,
+		"overwrite_exclusions":  []string{"latest"},
 		"version":               current.Version,
 	})
 	if resp.StatusCode != http.StatusOK {
@@ -553,8 +556,25 @@ func TestRegistryPolicyAdminAPIIsDynamicAndVersioned(t *testing.T) {
 	if err := json.Unmarshal(env.Data, &current); err != nil {
 		t.Fatalf("decode updated policy: %v", err)
 	}
-	if !current.Prevent || current.Version != 1 {
+	if !current.Prevent || current.Version != 1 || !slices.Equal(current.Exclusions, []string{"latest"}) {
 		t.Fatalf("unexpected updated policy: %+v", current)
+	}
+
+	// Older management clients omit overwrite_exclusions. The server must
+	// preserve the current list rather than clearing it.
+	resp, raw = h.do(http.MethodPatch, "/api/admin/registry-policy", map[string]any{
+		"prevent_tag_overwrite": false,
+		"version":               current.Version,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("compatible patch policy want 200, got %d; body=%s", resp.StatusCode, raw)
+	}
+	env = h.decode(raw)
+	if err := json.Unmarshal(env.Data, &current); err != nil {
+		t.Fatalf("decode compatible policy update: %v", err)
+	}
+	if current.Prevent || current.Version != 2 || !slices.Equal(current.Exclusions, []string{"latest"}) {
+		t.Fatalf("compatible patch did not preserve exclusions: %+v", current)
 	}
 
 	resp, raw = h.do(http.MethodPatch, "/api/admin/registry-policy", map[string]any{

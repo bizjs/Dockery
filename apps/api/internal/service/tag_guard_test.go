@@ -172,6 +172,46 @@ func TestTagGuardRejectsOverwriteAndAllowsIdempotentPush(t *testing.T) {
 	}
 }
 
+func TestTagGuardAllowsConfiguredOverwriteExclusion(t *testing.T) {
+	body := []byte(`{"schemaVersion":2}`)
+	headCount := 0
+	putCount := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			headCount++
+			w.Header().Set("Docker-Content-Digest", "sha256:"+strings.Repeat("a", 64))
+			w.WriteHeader(http.StatusOK)
+		case http.MethodPut:
+			putCount++
+			w.WriteHeader(http.StatusCreated)
+		}
+	}))
+	defer upstream.Close()
+
+	policy := newGuardPolicy(t, nil)
+	if _, err := policy.Update(context.Background(), 0, true, []string{"latest"}, "admin"); err != nil {
+		t.Fatalf("enable policy with exclusion: %v", err)
+	}
+	issuer := newGuardIssuer(t)
+	api := newGuardHTTPServer(t, NewTagGuardService(
+		policy,
+		issuer,
+		nil,
+		biz.RegistryUpstreamURL(upstream.URL),
+		"http://dockery.test/token",
+	))
+	defer api.Close()
+
+	// Excluded tags bypass the overwrite HEAD check and are transparently
+	// forwarded. Distribution remains responsible for final authentication.
+	resp, raw := doManifestPut(t, api.Client(), api.URL, "", body)
+	if resp.StatusCode != http.StatusCreated || headCount != 0 || putCount != 1 {
+		t.Fatalf("excluded latest want transparent 201, got %d head=%d put=%d body=%s",
+			resp.StatusCode, headCount, putCount, raw)
+	}
+}
+
 func TestTagGuardAllowsNewTagAndFailsClosedOnHeadError(t *testing.T) {
 	body := []byte(`{"schemaVersion":2}`)
 	headStatus := http.StatusNotFound
@@ -226,7 +266,7 @@ func TestTagGuardDisabledIsTransparentAndEnabledRequiresToken(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated || putCount != 1 {
 		t.Fatalf("disabled guard want transparent 201, got %d count=%d body=%s", resp.StatusCode, putCount, raw)
 	}
-	if _, err := policy.Update(context.Background(), 0, true, "admin"); err != nil {
+	if _, err := policy.Update(context.Background(), 0, true, nil, "admin"); err != nil {
 		t.Fatalf("enable policy: %v", err)
 	}
 	resp, raw = doManifestPut(t, api.Client(), api.URL, "", body)

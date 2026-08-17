@@ -83,6 +83,24 @@ func (s *TagGuardService) PutManifest(ctx *router.Context) error {
 		return s.writeRegistryError(ctx, http.StatusBadRequest, "NAME_INVALID",
 			"invalid repository or manifest reference", nil)
 	}
+	targetTags := append([]string(nil), ctx.Request().URL.Query()["tag"]...)
+	if !digestReferencePattern.MatchString(reference) {
+		targetTags = append(targetTags, reference)
+	}
+	for _, tag := range targetTags {
+		if tag == "" || strings.Contains(tag, "/") {
+			return s.writeRegistryError(ctx, http.StatusBadRequest, "TAG_INVALID", "invalid manifest tag", nil)
+		}
+	}
+	protectedTags := make([]string, 0, len(targetTags))
+	for _, tag := range targetTags {
+		if !policy.IsOverwriteExcluded(tag) {
+			protectedTags = append(protectedTags, tag)
+		}
+	}
+	if len(protectedTags) == 0 {
+		return s.proxyPut(ctx, ctx.Request().Body, ctx.Request().ContentLength)
+	}
 
 	rawToken, ok := biz.ParseBearerToken(ctx.Header("Authorization"))
 	if !ok {
@@ -105,29 +123,19 @@ func (s *TagGuardService) PutManifest(ctx *router.Context) error {
 	}
 
 	attemptedDigest := reference
-	targetTags := append([]string(nil), ctx.Request().URL.Query()["tag"]...)
 	if !digestReferencePattern.MatchString(reference) {
 		sum := sha256.Sum256(body)
 		attemptedDigest = "sha256:" + hex.EncodeToString(sum[:])
-		targetTags = append(targetTags, reference)
-	}
-	for _, tag := range targetTags {
-		if tag == "" || strings.Contains(tag, "/") {
-			return s.writeRegistryError(ctx, http.StatusBadRequest, "TAG_INVALID", "invalid manifest tag", nil)
-		}
-	}
-	if len(targetTags) == 0 {
-		return s.proxyPut(ctx, io.NopCloser(bytes.NewReader(body)), int64(len(body)))
 	}
 
-	lockKeys := make([]string, 0, len(targetTags))
-	for _, tag := range targetTags {
+	lockKeys := make([]string, 0, len(protectedTags))
+	for _, tag := range protectedTags {
 		lockKeys = append(lockKeys, repo+"\x00"+tag)
 	}
 	unlock := s.locks.lockMany(lockKeys)
 	defer unlock()
 
-	for _, tag := range uniqueSorted(targetTags) {
+	for _, tag := range uniqueSorted(protectedTags) {
 		currentDigest, status, retryAfter, err := s.currentTagDigest(ctx, repo, tag)
 		if err != nil {
 			if retryAfter != "" {
