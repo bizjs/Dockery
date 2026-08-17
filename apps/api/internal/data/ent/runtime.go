@@ -7,6 +7,7 @@ import (
 	"api/internal/data/ent/repometa"
 	"api/internal/data/ent/repopermission"
 	"api/internal/data/ent/schema"
+	"api/internal/data/ent/systemsetting"
 	"api/internal/data/ent/user"
 	"time"
 )
@@ -67,6 +68,30 @@ func init() {
 	repopermissionDescCreatedAt := repopermissionFields[1].Descriptor()
 	// repopermission.DefaultCreatedAt holds the default value on creation for the created_at field.
 	repopermission.DefaultCreatedAt = repopermissionDescCreatedAt.Default.(func() time.Time)
+	systemsettingFields := schema.SystemSetting{}.Fields()
+	_ = systemsettingFields
+	// systemsettingDescKey is the schema descriptor for key field.
+	systemsettingDescKey := systemsettingFields[0].Descriptor()
+	// systemsetting.KeyValidator is a validator for the "key" field. It is called by the builders before save.
+	systemsetting.KeyValidator = systemsettingDescKey.Validators[0].(func(string) error)
+	// systemsettingDescVersion is the schema descriptor for version field.
+	systemsettingDescVersion := systemsettingFields[2].Descriptor()
+	// systemsetting.DefaultVersion holds the default value on creation for the version field.
+	systemsetting.DefaultVersion = systemsettingDescVersion.Default.(int64)
+	// systemsetting.VersionValidator is a validator for the "version" field. It is called by the builders before save.
+	systemsetting.VersionValidator = systemsettingDescVersion.Validators[0].(func(int64) error)
+	// systemsettingDescUpdatedAt is the schema descriptor for updated_at field.
+	systemsettingDescUpdatedAt := systemsettingFields[3].Descriptor()
+	// systemsetting.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	systemsetting.DefaultUpdatedAt = systemsettingDescUpdatedAt.Default.(func() time.Time)
+	// systemsetting.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	systemsetting.UpdateDefaultUpdatedAt = systemsettingDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// systemsettingDescUpdatedBy is the schema descriptor for updated_by field.
+	systemsettingDescUpdatedBy := systemsettingFields[4].Descriptor()
+	// systemsetting.DefaultUpdatedBy holds the default value on creation for the updated_by field.
+	systemsetting.DefaultUpdatedBy = systemsettingDescUpdatedBy.Default.(string)
+	// systemsetting.UpdatedByValidator is a validator for the "updated_by" field. It is called by the builders before save.
+	systemsetting.UpdatedByValidator = systemsettingDescUpdatedBy.Validators[0].(func(string) error)
 	userFields := schema.User{}.Fields()
 	_ = userFields
 	// userDescUsername is the schema descriptor for username field.

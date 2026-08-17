@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"api/internal/conf"
 	"api/internal/data/ent"
@@ -17,11 +18,9 @@ import (
 )
 
 // ProviderSet is data providers.
-var ProviderSet = wire.NewSet(NewData, NewUserRepo, NewPermissionRepo, NewAuditRepo, NewRepoMetaRepo)
+var ProviderSet = wire.NewSet(NewData, ProvideEntClient, NewUserRepo, NewPermissionRepo, NewAuditRepo, NewRepoMetaRepo)
 
-// Data wraps shared data-layer resources. Biz-level repos reach the ent
-// client through DB() rather than importing the ent package themselves,
-// so the biz layer stays testable without spinning up a real database.
+// Data wraps shared data-layer resources.
 type Data struct {
 	db  *ent.Client
 	log *log.Helper
@@ -29,6 +28,11 @@ type Data struct {
 
 // DB returns the ent client.
 func (d *Data) DB() *ent.Client { return d.db }
+
+// ProvideEntClient exposes the generated client for the registry policy,
+// whose persistence logic is intentionally kept directly in biz. Existing
+// repositories continue to use Data unchanged.
+func ProvideEntClient(d *Data) *ent.Client { return d.db }
 
 // NewData opens the SQLite database via modernc.org/sqlite, wires an ent
 // client and auto-migrates all schemas.
@@ -49,7 +53,9 @@ func NewData(c *conf.Data, logger log.Logger) (*Data, func(), error) {
 	drv := entsql.OpenDB(dialect.SQLite, stdDB)
 	client := ent.NewClient(ent.Driver(drv))
 
-	if err := client.Schema.Create(context.Background()); err != nil {
+	migrationCtx, cancelMigration := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelMigration()
+	if err := client.Schema.Create(migrationCtx); err != nil {
 		_ = client.Close()
 		return nil, nil, fmt.Errorf("ent schema create: %w", err)
 	}

@@ -15,5 +15,8 @@ type RepoMeta func(*sql.Selector)
 // RepoPermission is the predicate function for repopermission builders.
 type RepoPermission func(*sql.Selector)
 
+// SystemSetting is the predicate function for systemsetting builders.
+type SystemSetting func(*sql.Selector)
+
 // User is the predicate function for user builders.
 type User func(*sql.Selector)
