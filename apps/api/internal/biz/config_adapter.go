@@ -1,6 +1,8 @@
 package biz
 
 import (
+	"os"
+	"strings"
 	"time"
 
 	"api/internal/conf"
@@ -36,6 +38,10 @@ func NewWebhookSecretConfigFromConf(c *conf.Dockery) WebhookSecretConfig {
 // port); override via `dockery.registry.upstream_url`.
 type RegistryUpstreamURL string
 
+// RegistryAuthRealm is the externally reachable token endpoint used by
+// TagGuard when it needs to emit its own Bearer challenge.
+type RegistryAuthRealm string
+
 // NewRegistryUpstreamURL resolves the upstream base URL from conf with
 // a sane container default.
 func NewRegistryUpstreamURL(c *conf.Dockery) RegistryUpstreamURL {
@@ -44,6 +50,16 @@ func NewRegistryUpstreamURL(c *conf.Dockery) RegistryUpstreamURL {
 		u = "http://127.0.0.1:5001"
 	}
 	return RegistryUpstreamURL(u)
+}
+
+func NewRegistryAuthRealm(c *conf.Dockery) RegistryAuthRealm {
+	if realm := strings.TrimSpace(os.Getenv("REGISTRY_AUTH_TOKEN_REALM")); realm != "" {
+		return RegistryAuthRealm(realm)
+	}
+	if publicURL := strings.TrimRight(strings.TrimSpace(c.Token.PublicURL), "/"); publicURL != "" {
+		return RegistryAuthRealm(publicURL + "/token")
+	}
+	return ""
 }
 
 // NewRegistryFetchClient wires a *registryfetch.Client for components

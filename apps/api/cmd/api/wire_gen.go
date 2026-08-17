@@ -57,6 +57,11 @@ func wireApp(confServer *conf.Server, confData *conf.Data, dockery *conf.Dockery
 	client := biz.NewRegistryFetchClient(tokenIssuer, registryUpstreamURL)
 	repoMetaUsecase := biz.NewRepoMetaUsecase(repoMetaRepo, client, logger)
 	registryService := service.NewRegistryService(userUsecase, permissionUsecase, tokenIssuer, auditUsecase, maintenance, repoMetaUsecase, client, registryUpstreamURL)
+	entClient := data.ProvideEntClient(dataData)
+	registryPolicyUsecase := biz.NewRegistryPolicyUsecase(entClient)
+	registryPolicyService := service.NewRegistryPolicyService(registryPolicyUsecase, auditUsecase)
+	registryAuthRealm := biz.NewRegistryAuthRealm(dockery)
+	tagGuardService := service.NewTagGuardService(registryPolicyUsecase, tokenIssuer, auditUsecase, registryUpstreamURL, registryAuthRealm)
 	tokenService := service.NewTokenService(userUsecase, permissionUsecase, tokenIssuer, auditUsecase)
 	gcConfig := biz.NewGCConfigFromConf(dockery)
 	reconcilerConfig := biz.NewReconcilerConfigFromConf(dockery)
@@ -71,20 +76,22 @@ func wireApp(confServer *conf.Server, confData *conf.Data, dockery *conf.Dockery
 	}
 	webhookService := service.NewWebhookService(webhookSecret, repoMetaUsecase)
 	services := &service.Services{
-		System:     systemService,
-		Auth:       authService,
-		User:       userService,
-		Permission: permissionService,
-		Registry:   registryService,
-		Token:      tokenService,
-		Admin:      adminService,
-		Webhook:    webhookService,
+		System:         systemService,
+		Auth:           authService,
+		User:           userService,
+		Permission:     permissionService,
+		Registry:       registryService,
+		RegistryPolicy: registryPolicyService,
+		TagGuard:       tagGuardService,
+		Token:          tokenService,
+		Admin:          adminService,
+		Webhook:        webhookService,
 	}
 	memoryStore := session.NewMemoryStore()
 	config := biz.NewSessionConfigFromConf(dockery)
 	manager := biz.NewSessionManager(memoryStore, config)
 	httpServer := server.NewHTTPServer(confServer, services, manager, logger)
-	app := newApp(logger, httpServer, userUsecase, repoMetaUsecase, reconciler, dockery)
+	app := newApp(logger, httpServer, userUsecase, registryPolicyUsecase, repoMetaUsecase, reconciler, dockery)
 	return app, func() {
 		cleanup()
 	}, nil

@@ -1,7 +1,7 @@
 server:
   http:
     addr: 0.0.0.0:5001
-    timeout: 5s
+    timeout: 30s
 data:
   database:
     driver: sqlite
