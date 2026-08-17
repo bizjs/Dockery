@@ -4,6 +4,8 @@ import { useViewModel } from 'bizify';
 import { SettingsViewModel } from './view-model';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import {
   AlertDialog,
@@ -25,7 +27,10 @@ export default function SettingsPage() {
   const s = vm.useSnapshot();
   const enabled = s.policy?.prevent_tag_overwrite ?? false;
   const unavailable = s.loading || s.saving || !s.policy || s.unknown;
+  const exclusionsUnavailable = unavailable || !enabled;
   const enabling = s.pendingValue === true;
+  const savedExclusions = (s.policy?.overwrite_exclusions ?? []).join(', ');
+  const exclusionsDirty = s.exclusionsDraft !== savedExclusions;
 
   return (
     <div className="space-y-6">
@@ -50,7 +55,7 @@ export default function SettingsPage() {
             </CardTitle>
             <CardDescription>
               Prevent an existing tag from being moved to a different manifest digest.
-              Re-pushing the same digest remains allowed.
+              Re-pushing the same digest and explicitly excluded tags remain allowed.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -71,7 +76,9 @@ export default function SettingsPage() {
                 </p>
                 <p className="text-sm text-muted-foreground">
                   {enabled
-                    ? 'Existing tags cannot be moved to another digest.'
+                    ? s.policy?.overwrite_exclusions.length
+                      ? `Existing tags are immutable except: ${s.policy.overwrite_exclusions.join(', ')}.`
+                      : 'Existing tags cannot be moved to another digest. No exceptions are configured.'
                     : 'Existing tags may be overwritten. This is the default behavior.'}
                 </p>
                 {s.policy && (
@@ -87,9 +94,37 @@ export default function SettingsPage() {
                 <Switch
                   aria-label="Tag overwrite protection"
                   checked={enabled}
-                  disabled={unavailable}
+                  disabled={unavailable || exclusionsDirty}
                   onCheckedChange={(checked) => vm.requestChange(checked)}
                 />
+              </div>
+            </div>
+
+            <div className="space-y-3 rounded-md border px-4 py-4">
+              <div className="space-y-1">
+                <Label htmlFor="overwrite-exclusions">Overwrite exceptions</Label>
+                <p className="text-sm text-muted-foreground">
+                  Exact tag names separated by commas. For example, add <code>latest</code> to keep that rolling tag mutable.
+                  Leave empty to protect every existing tag. Enable protection to edit this list, and save exception edits before changing the switch.
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Input
+                  id="overwrite-exclusions"
+                  aria-label="Overwrite exceptions"
+                  placeholder="latest, nightly"
+                  value={s.exclusionsDraft}
+                  disabled={exclusionsUnavailable}
+                  onChange={(event) => vm.setExclusionsDraft(event.target.value)}
+                />
+                <Button
+                  variant="outline"
+                  disabled={exclusionsUnavailable || !exclusionsDirty}
+                  onClick={() => vm.requestExclusionsChange()}
+                >
+                  {s.saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Save exceptions
+                </Button>
               </div>
             </div>
           </CardContent>
@@ -107,7 +142,9 @@ export default function SettingsPage() {
                 <ShieldAlert className="mt-0.5 h-4 w-4 flex-shrink-0" />
                 <span>
                   {enabling
-                    ? 'CI pipelines that intentionally move rolling tags such as latest will fail when the tag already points to another digest.'
+                    ? s.exclusionsDraft.trim()
+                      ? 'Existing tags will become immutable except for the exact tag names currently listed as overwrite exceptions.'
+                      : 'All existing tags, including latest, will become immutable when they already point to another digest.'
                     : 'Every user with push permission will be able to move existing tags to different image digests again.'}
                 </span>
               </span>
@@ -118,6 +155,36 @@ export default function SettingsPage() {
             <AlertDialogCancel disabled={s.saving}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={() => vm.confirmChange()} disabled={s.saving}>
               {enabling ? 'Enable protection' : 'Disable protection'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={s.pendingExclusions !== null}
+        onOpenChange={(open) => !open && vm.cancelExclusionsChange()}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {s.pendingExclusions?.length ? 'Update overwrite exceptions?' : 'Remove all overwrite exceptions?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <span className="flex items-start gap-2">
+                <ShieldAlert className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                <span>
+                  {s.pendingExclusions?.length
+                    ? `These tags will remain mutable while protection is enabled: ${s.pendingExclusions.join(', ')}.`
+                    : 'When protection is enabled, every existing tag—including latest—will be immutable.'}
+                </span>
+              </span>
+              <span className="block">Only exact tag names match. The change applies immediately.</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={s.saving}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => vm.confirmExclusionsChange()} disabled={s.saving}>
+              Save exceptions
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
