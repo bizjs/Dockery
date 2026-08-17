@@ -106,7 +106,7 @@ Deleting or demoting the last admin is refused.
 
 ## Tag overwrite protection
 
-Admins can switch **Settings → Registry → Tag overwrite protection** at runtime without restarting services. It is off by default so upgrades preserve existing CI behavior. An empty database uses that default without inserting a setting row; the shared SQLite `system_settings` key is created or updated only after an administrator actually changes it. When enabled, creating a tag and re-pushing the same digest remain valid, while moving an existing tag to a different digest returns a registry-native `409 DENIED`. A deleted tag name may be reused.
+Admins can switch **Settings → Registry → Tag overwrite protection** at runtime without restarting services. It is off by default so upgrades preserve existing CI behavior. An empty database uses that default without inserting a setting row; shared SQLite `system_settings` keys are created or updated only after an administrator actually changes the policy. When enabled, creating a tag and re-pushing the same digest remain valid, while moving an existing tag to a different digest returns a registry-native `409 DENIED`. Exact tag names such as `latest` can be added to an overwrite-exception list when rolling tags are required; the list is empty by default and does not accept wildcards. A deleted tag name may also be reused.
 
 ## Configuration
 

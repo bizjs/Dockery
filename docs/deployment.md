@@ -324,7 +324,7 @@ docker compose -f docker-compose.ghcr.yml pull
 docker compose -f docker-compose.ghcr.yml up -d    # 重建 dockery 容器
 ```
 
-SQLite schema 会自动 migrate（`ent.Schema.Create` 幂等且默认只增不删）。首次升级到支持动态设置的版本时只新增空的 `system_settings` 表；`registry.prevent_tag_overwrite` 缺失时业务使用默认 false，但不会写行，只有管理员实际修改时才创建或更新 key。旧用户、权限、审计和仓库元数据不会被改写，重复启动也不会制造配置记录。密钥持久化在 volume,升级不丢。
+SQLite schema 会自动 migrate（`ent.Schema.Create` 幂等且默认只增不删）。首次升级到支持动态设置的版本时只新增空的 `system_settings` 表；`registry.prevent_tag_overwrite` 缺失时业务使用默认 false，`registry.tag_overwrite_exclusions` 缺失时使用空列表，启动不会写默认行。只有管理员实际修改时才创建或更新对应 key。两项策略在事务中更新，主开关的 version 作为整个策略的乐观锁版本。旧版保存的 boolean 开关值无需转换即可读取，旧用户、权限、审计和仓库元数据不会被改写，重复启动也不会制造配置记录。密钥持久化在 volume,升级不丢。
 
 **回滚**:
 

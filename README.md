@@ -106,7 +106,7 @@ docker exec -it dockery dockery-api -conf /etc/dockery user delete alice
 
 ## Tag 防覆盖设置
 
-管理员可在 **Settings → Registry → Tag overwrite protection** 动态切换，无需重启。开关默认关闭，升级后继续允许覆盖，避免打断已有 CI；空库直接使用默认值且不写配置行，只有管理员实际修改时才在 SQLite 的统一 `system_settings` 表创建或更新 key。开启后首次创建 tag 和重复推送同一 digest 仍然成功，把现有 tag 移到不同 digest 则返回 Registry 原生 `409 DENIED`。删除旧 tag 后可重新使用该名称。
+管理员可在 **Settings → Registry → Tag overwrite protection** 动态切换，无需重启。开关默认关闭，升级后继续允许覆盖，避免打断已有 CI；空库直接使用默认值且不写配置行，只有管理员实际修改时才在 SQLite 的统一 `system_settings` 表创建或更新 key。开启后首次创建 tag 和重复推送同一 digest 仍然成功，把现有 tag 移到不同 digest 则返回 Registry 原生 `409 DENIED`。需要滚动更新 `latest` 等 tag 时，可把精确 tag 名加入覆盖例外列表；列表默认空，不支持通配符。删除旧 tag 后也可重新使用该名称。
 
 ## 配置
 

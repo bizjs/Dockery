@@ -15,26 +15,6 @@ Go 1.25 backend for [Dockery](../../). Single static binary (`dockery-api`) that
 - [google/wire](https://github.com/google/wire) — DI
 - `golang.org/x/crypto/bcrypt` — password hashing
 
-## Layout
-
-```
-apps/api/
-├── cmd/api/
-│   ├── main.go         entrypoint; EnsureAdmin bootstrap; subcommand dispatch
-│   ├── user_cmd.go     `dockery-api user list|create|passwd|grant|revoke|delete`
-│   ├── wire.go
-│   └── wire_gen.go
-├── configs/config.yaml local dev config (listens :5001)
-└── internal/
-    ├── conf/           yaml schema + generated pb code
-    ├── data/           ent client + User/Permission repos
-    │   └── ent/        generated ent client + schema/*
-    ├── biz/            usecases: user, permission, token, keystore
-    ├── service/        HTTP handlers (system, auth, user, permission, registry, token, admin)
-    ├── server/         kratoscarf wiring + middleware (RequireSession, RequireAdmin) + route tree
-    └── util/scope/     Docker scope parsing + glob matching + role→actions
-```
-
 ## Common commands
 
 ```bash
@@ -63,14 +43,6 @@ Grouped by auth requirement:
 
 `/token` bypasses the kratoscarf `{code,message,data}` envelope — it returns the Docker-spec `{token, access_token, expires_in, issued_at}` shape via `ctx.JSON`. Everything else goes through the envelope (`ctx.Success`) and the shared ErrorEncoder.
 
-## Key files
-
-- `internal/biz/keystore.go` — loads/generates `jwt-private.pem` (PKCS#8) and re-derives `jwt-jwks.json` on every boot. JWKS written atomically (tmp + rename) so a concurrent registry reload never sees a truncated file.
-- `internal/biz/token.go` — Ed25519 JWT issuance with scoped `access` claim for distribution.
-- `internal/biz/permission.go` — `ResolveAccess` is the hot path called on every `/token` hit: load patterns once, intersect each requested scope with role actions.
-- `internal/service/registry.go` — UI proxy. Checks per-user permissions, mints a 30s admin-scoped JWT for the upstream registry, filters `/v2/_catalog` output for non-admins.
-- `internal/service/token.go` — Docker realm handler; returns the Docker-spec JSON envelope.
-
 ## Config (`configs/config.yaml`)
 
 ```yaml
@@ -83,9 +55,9 @@ data:
     source: file:./data/dockery.db?cache=shared&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)
 dockery:
   keystore: { private_path: ./data/jwt-private.pem, jwks_path: ./data/jwt-jwks.json }
-  token:    { issuer: dockery-api, audience: dockery, ttl_seconds: 300 }
-  admin:    { username: admin, password: "" }                 # or set DOCKERY_ADMIN_PASSWORD env
-  session:  { ttl_hours: 168, cookie_name: dockery_session, cookie_secure: false }
+  token: { issuer: dockery-api, audience: dockery, ttl_seconds: 300 }
+  admin: { username: admin, password: '' } # or set DOCKERY_ADMIN_PASSWORD env
+  session: { ttl_hours: 168, cookie_name: dockery_session, cookie_secure: false }
 ```
 
 Inside the container a separate `config.yaml` (from `docker/rootfs/etc/dockery/`) points paths at `/data/…` and binds to `127.0.0.1:3001`.

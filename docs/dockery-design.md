@@ -283,7 +283,7 @@ CREATE INDEX idx_perm_user ON repo_permissions(user_id);
 CREATE UNIQUE INDEX idx_repo_meta_repo ON repo_meta(repo);
 ```
 
-动态设置采用“缺失即默认”语义：空表读取 `registry.prevent_tag_overwrite` 得到虚拟 `false/version=0`，启动不写行；管理员首次实际修改时 INSERT 为 version=1，后续按 key/version 乐观更新。
+动态设置采用“缺失即默认”语义：空表读取 `registry.prevent_tag_overwrite` 得到虚拟 `false/version=0`，读取 `registry.tag_overwrite_exclusions` 得到空列表，启动不写行；管理员首次实际修改时才写入。防覆盖开关继续保存为 JSON boolean 以兼容旧版数据，精确 tag 例外保存为独立 JSON 数组，两项在同一事务内更新并以主开关 version 做乐观并发控制。
 
 ### 5.2 文件系统布局（/data）
 
