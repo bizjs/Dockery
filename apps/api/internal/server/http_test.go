@@ -37,7 +37,7 @@ type harness struct {
 	baseURL string
 	client  *http.Client
 	users   *biz.UserUsecase
-	policy  *biz.RegistryPolicyUsecase
+	policy  *biz.RegistryPolicyBiz
 	stop    func()
 }
 
@@ -81,8 +81,8 @@ func newHarness(t *testing.T) *harness {
 	userUC := biz.NewUserUsecase(userRepo)
 	permUC := biz.NewPermissionUsecase(permRepo, userRepo)
 	auditUC := biz.NewAuditUsecase(auditRepo, logger)
-	policyUC := biz.NewRegistryPolicyUsecase(d.DB())
-	if err := policyUC.Initialize(context.Background()); err != nil {
+	policyBiz := biz.NewRegistryPolicyBiz(d.DB())
+	if err := policyBiz.Initialize(context.Background()); err != nil {
 		t.Fatalf("initialize registry policy: %v", err)
 	}
 	maint := biz.NewMaintenance()
@@ -108,8 +108,8 @@ func newHarness(t *testing.T) *harness {
 		User:           service.NewUserService(userUC, permUC, auditUC),
 		Permission:     service.NewPermissionService(permUC, userUC, auditUC),
 		Registry:       service.NewRegistryService(userUC, permUC, iss, auditUC, maint, metaUC, fetcher, upstream),
-		RegistryPolicy: service.NewRegistryPolicyService(policyUC, auditUC),
-		TagGuard:       service.NewTagGuardService(policyUC, iss, auditUC, upstream, "http://dockery.test/token"),
+		RegistryPolicy: service.NewRegistryPolicyService(policyBiz, auditUC),
+		TagGuard:       service.NewTagGuardService(policyBiz, iss, auditUC, upstream, "http://dockery.test/token"),
 		Token:          service.NewTokenService(userUC, permUC, iss, auditUC),
 		Admin:          service.NewAdminService(auditUC, gcRunner),
 		Webhook:        service.NewWebhookService(whSecret, metaUC),
@@ -147,7 +147,7 @@ func newHarness(t *testing.T) *harness {
 		baseURL: testSrv.URL,
 		client:  client,
 		users:   userUC,
-		policy:  policyUC,
+		policy:  policyBiz,
 		stop: func() {
 			testSrv.Close()
 			cleanup()

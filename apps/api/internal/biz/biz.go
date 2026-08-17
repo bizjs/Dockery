@@ -32,7 +32,7 @@ var ProviderSet = wire.NewSet(
 	NewRegistryAuthRealm,
 	NewRegistryFetchClient,
 	NewRepoMetaUsecase,
-	NewRegistryPolicyUsecase,
+	NewRegistryPolicyBiz,
 	NewReconcilerConfigFromConf,
 	NewReconciler,
 )

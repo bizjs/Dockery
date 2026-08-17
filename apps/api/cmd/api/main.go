@@ -47,7 +47,7 @@ func newApp(
 	logger log.Logger,
 	hs *http.Server,
 	users *biz.UserUsecase,
-	policy *biz.RegistryPolicyUsecase,
+	policy *biz.RegistryPolicyBiz,
 	meta *biz.RepoMetaUsecase,
 	reconciler *biz.Reconciler,
 	dockery *conf.Dockery,

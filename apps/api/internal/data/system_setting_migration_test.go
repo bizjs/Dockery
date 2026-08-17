@@ -82,7 +82,7 @@ func TestSystemSettingSchemaAutoMigratesOldDatabase(t *testing.T) {
 
 	// Startup reads a missing key as a virtual default and must leave the
 	// table empty. Only an administrator's actual change creates the row.
-	policy := biz.NewRegistryPolicyUsecase(client)
+	policy := biz.NewRegistryPolicyBiz(client)
 	if err := policy.Initialize(ctx); err != nil {
 		t.Fatalf("initialize virtual default: %v", err)
 	}

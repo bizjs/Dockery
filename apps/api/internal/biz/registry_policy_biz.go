@@ -32,18 +32,18 @@ const SettingKeyPreventTagOverwrite = "registry.prevent_tag_overwrite"
 
 const registryPolicyGateCapacity int64 = 1 << 30
 
-// RegistryPolicyUsecase owns the in-memory policy snapshot and the switch
+// RegistryPolicyBiz owns the in-memory policy snapshot and the switch
 // barrier. Manifest PUTs hold one gate permit for their full lifetime;
 // updates acquire the entire gate, so a successful update cleanly separates
 // requests using the old policy from requests using the new one.
-type RegistryPolicyUsecase struct {
+type RegistryPolicyBiz struct {
 	db       *ent.Client
 	gate     *semaphore.Weighted
 	snapshot atomic.Pointer[RegistryPolicy]
 }
 
-func NewRegistryPolicyUsecase(db *ent.Client) *RegistryPolicyUsecase {
-	return &RegistryPolicyUsecase{
+func NewRegistryPolicyBiz(db *ent.Client) *RegistryPolicyBiz {
+	return &RegistryPolicyBiz{
 		db:   db,
 		gate: semaphore.NewWeighted(registryPolicyGateCapacity),
 	}
@@ -52,7 +52,7 @@ func NewRegistryPolicyUsecase(db *ent.Client) *RegistryPolicyUsecase {
 // Initialize loads the persisted value before the HTTP server starts. A
 // missing key is represented as a virtual version-0 default and is not
 // written: system_settings only records administrator changes.
-func (u *RegistryPolicyUsecase) Initialize(ctx context.Context) error {
+func (u *RegistryPolicyBiz) Initialize(ctx context.Context) error {
 	setting, err := u.querySetting(ctx)
 	if ent.IsNotFound(err) {
 		u.snapshot.Store(&RegistryPolicy{
@@ -76,7 +76,7 @@ func (u *RegistryPolicyUsecase) Initialize(ctx context.Context) error {
 	return nil
 }
 
-func (u *RegistryPolicyUsecase) Get() (*RegistryPolicy, error) {
+func (u *RegistryPolicyBiz) Get() (*RegistryPolicy, error) {
 	p := u.snapshot.Load()
 	if p == nil {
 		return nil, ErrRegistryPolicyNotInitialized
@@ -86,7 +86,7 @@ func (u *RegistryPolicyUsecase) Get() (*RegistryPolicy, error) {
 
 // EnterManifestPut returns a stable policy snapshot and a release function.
 // Callers must defer release until the upstream manifest PUT has completed.
-func (u *RegistryPolicyUsecase) EnterManifestPut(ctx context.Context) (*RegistryPolicy, func(), error) {
+func (u *RegistryPolicyBiz) EnterManifestPut(ctx context.Context) (*RegistryPolicy, func(), error) {
 	if err := u.gate.Acquire(ctx, 1); err != nil {
 		return nil, nil, err
 	}
@@ -100,7 +100,7 @@ func (u *RegistryPolicyUsecase) EnterManifestPut(ctx context.Context) (*Registry
 
 // Update changes the policy with optimistic concurrency control. Acquiring
 // the entire gate makes the update a linearization point for manifest PUTs.
-func (u *RegistryPolicyUsecase) Update(
+func (u *RegistryPolicyBiz) Update(
 	ctx context.Context,
 	expectedVersion int64,
 	preventTagOverwrite bool,
@@ -155,13 +155,13 @@ func (u *RegistryPolicyUsecase) Update(
 	return cloneRegistryPolicy(updated), nil
 }
 
-func (u *RegistryPolicyUsecase) querySetting(ctx context.Context) (*ent.SystemSetting, error) {
+func (u *RegistryPolicyBiz) querySetting(ctx context.Context) (*ent.SystemSetting, error) {
 	return u.db.SystemSetting.Query().
 		Where(systemsetting.KeyEQ(SettingKeyPreventTagOverwrite)).
 		Only(ctx)
 }
 
-func (u *RegistryPolicyUsecase) updateSetting(
+func (u *RegistryPolicyBiz) updateSetting(
 	ctx context.Context,
 	expectedVersion int64,
 	value json.RawMessage,

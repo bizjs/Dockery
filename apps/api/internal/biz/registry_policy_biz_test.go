@@ -34,7 +34,7 @@ func newPolicyTestClient(t *testing.T) *ent.Client {
 
 func TestRegistryPolicyInitializeAndUpdate(t *testing.T) {
 	client := newPolicyTestClient(t)
-	uc := NewRegistryPolicyUsecase(client)
+	uc := NewRegistryPolicyBiz(client)
 	if err := uc.Initialize(context.Background()); err != nil {
 		t.Fatalf("initialize: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestRegistryPolicyRejectsNonBooleanJSON(t *testing.T) {
 				Save(context.Background()); err != nil {
 				t.Fatalf("seed setting: %v", err)
 			}
-			if err := NewRegistryPolicyUsecase(client).Initialize(context.Background()); err == nil {
+			if err := NewRegistryPolicyBiz(client).Initialize(context.Background()); err == nil {
 				t.Fatalf("Initialize accepted non-boolean JSON %s", value)
 			}
 		})
@@ -86,7 +86,7 @@ func TestRegistryPolicyRejectsNonBooleanJSON(t *testing.T) {
 }
 
 func TestRegistryPolicySwitchWaitsForActivePut(t *testing.T) {
-	uc := NewRegistryPolicyUsecase(newPolicyTestClient(t))
+	uc := NewRegistryPolicyBiz(newPolicyTestClient(t))
 	if err := uc.Initialize(context.Background()); err != nil {
 		t.Fatalf("initialize: %v", err)
 	}

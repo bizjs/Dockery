@@ -35,7 +35,7 @@ var hopByHopHeaders = map[string]struct{}{
 }
 
 type TagGuardService struct {
-	policy   *biz.RegistryPolicyUsecase
+	policy   *biz.RegistryPolicyBiz
 	tokens   *biz.TokenIssuer
 	audit    *biz.AuditUsecase
 	upstream string
@@ -45,7 +45,7 @@ type TagGuardService struct {
 }
 
 func NewTagGuardService(
-	policy *biz.RegistryPolicyUsecase,
+	policy *biz.RegistryPolicyBiz,
 	tokens *biz.TokenIssuer,
 	audit *biz.AuditUsecase,
 	upstream biz.RegistryUpstreamURL,

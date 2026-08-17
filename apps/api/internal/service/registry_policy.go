@@ -13,11 +13,11 @@ import (
 )
 
 type RegistryPolicyService struct {
-	policy *biz.RegistryPolicyUsecase
+	policy *biz.RegistryPolicyBiz
 	audit  *biz.AuditUsecase
 }
 
-func NewRegistryPolicyService(policy *biz.RegistryPolicyUsecase, audit *biz.AuditUsecase) *RegistryPolicyService {
+func NewRegistryPolicyService(policy *biz.RegistryPolicyBiz, audit *biz.AuditUsecase) *RegistryPolicyService {
 	return &RegistryPolicyService{policy: policy, audit: audit}
 }
 

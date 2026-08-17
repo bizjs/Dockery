@@ -27,7 +27,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func newGuardPolicy(t *testing.T, persisted *bool) *biz.RegistryPolicyUsecase {
+func newGuardPolicy(t *testing.T, persisted *bool) *biz.RegistryPolicyBiz {
 	t.Helper()
 	dsn := "file:" + filepath.Join(t.TempDir(), "guard.db") + "?_pragma=foreign_keys(1)"
 	stdDB, err := sql.Open("sqlite", dsn)
@@ -53,7 +53,7 @@ func newGuardPolicy(t *testing.T, persisted *bool) *biz.RegistryPolicyUsecase {
 			t.Fatalf("seed setting: %v", err)
 		}
 	}
-	policy := biz.NewRegistryPolicyUsecase(client)
+	policy := biz.NewRegistryPolicyBiz(client)
 	if err := policy.Initialize(context.Background()); err != nil {
 		t.Fatalf("initialize policy: %v", err)
 	}
