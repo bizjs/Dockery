@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { LogOut, User as UserIcon, Users as UsersIcon, Key, Wrench, ScrollText } from 'lucide-react';
+import { LogOut, User as UserIcon, Users as UsersIcon, Key, Wrench, ScrollText, Settings } from 'lucide-react';
 
 import { currentUserViewModel } from '@/hooks/use-current-user';
 import { Button } from '@/components/ui/button';
@@ -102,6 +102,12 @@ export function UserMenu() {
                 <Link to="/admin/users" className="cursor-pointer">
                   <UsersIcon className="h-4 w-4 mr-2" />
                   Manage users
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link to="/admin/settings" className="cursor-pointer">
+                  <Settings className="h-4 w-4 mr-2" />
+                  Settings
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>

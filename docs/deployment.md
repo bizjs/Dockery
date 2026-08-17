@@ -324,7 +324,7 @@ docker compose -f docker-compose.ghcr.yml pull
 docker compose -f docker-compose.ghcr.yml up -d    # 重建 dockery 容器
 ```
 
-SQLite schema 会自动 migrate(`ent.Schema.Create` 幂等)。密钥持久化在 volume,升级不丢。
+SQLite schema 会自动 migrate（`ent.Schema.Create` 幂等且默认只增不删）。首次升级到支持动态设置的版本时只新增空的 `system_settings` 表；`registry.prevent_tag_overwrite` 缺失时业务使用默认 false，但不会写行，只有管理员实际修改时才创建或更新 key。旧用户、权限、审计和仓库元数据不会被改写，重复启动也不会制造配置记录。密钥持久化在 volume,升级不丢。
 
 **回滚**:
 
@@ -335,7 +335,7 @@ docker compose -f docker-compose.ghcr.yml up -d
 
 `DOCKERY_IMAGE` 就是 `docker-compose.ghcr.yml` 里用来拉镜像的变量,不指定就是 `:latest`。**生产请锁版本**(如 `:0.9.0`,镜像 tag 不带 `v` 前缀),不要跟 `:latest`。
 
-**schema 降级**:ent auto-migrate 只加不删,回滚老版本通常没问题。但新版本若加了非空字段,回滚后会卡在 "column not found"。出现这种断层会在 release note 里明确标注,届时 restore 备份再启老版本。
+**schema 降级**：ent auto-migrate 只加不删，旧版本会忽略不认识的 `system_settings` 表，表和值仍保留。但功能不会随数据库一起降级兼容：若保护开启后回滚到没有 TagGuard 的旧镜像，旧版本期间会重新允许覆盖；再次升级会恢复保存的开启状态。正常回滚前应先到 Settings 关闭开关。其它不兼容字段变更会在 release note 明确标注，届时 restore 备份再启老版本。
 
 ---
 

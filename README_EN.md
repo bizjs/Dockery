@@ -9,6 +9,7 @@ Self-hosted Docker Registry — **Distribution v3.1.0 + React UI + accounts/perm
 - 📦 Push / pull / browse OCI + Docker v2 images
 - 🔐 CLI + Web UI share one user store; three roles (`admin` / `write` / `view`) with per-user glob repo patterns
 - 🔑 Ed25519-signed short-lived registry JWTs (5 min default, verified by registry via JWKS)
+- 🛡️ Dynamically configurable tag overwrite protection (off by default)
 - 🌐 React 19 UI: login, route guards, user & permission management, password change
 - 🐳 Single image, single port, SQLite + filesystem blob storage; back up `/data`
 
@@ -103,6 +104,10 @@ docker exec -it dockery dockery-api -conf /etc/dockery user delete alice
 
 Deleting or demoting the last admin is refused.
 
+## Tag overwrite protection
+
+Admins can switch **Settings → Registry → Tag overwrite protection** at runtime without restarting services. It is off by default so upgrades preserve existing CI behavior. An empty database uses that default without inserting a setting row; the shared SQLite `system_settings` key is created or updated only after an administrator actually changes it. When enabled, creating a tag and re-pushing the same digest remain valid, while moving an existing tag to a different digest returns a registry-native `409 DENIED`. A deleted tag name may be reused.
+
 ## Configuration
 
 ### Environment
@@ -172,9 +177,11 @@ Layout inside `/data`:
                    [ nginx ]
     ┌────────────┬────────┬────────────┐
     │            │        │            │
-   / static   /token   /api/*        /v2/*
+   / static   /token   /api/*       /v2/*
     │            │        │            │
  web-ui    dockery-api :3001   distribution :5001
+                 ▲                    ▲
+                 └── manifest PUT ────┘  other /v2/* requests stay direct
                  │                    ▲
                  ├── SQLite           │
                  ├── jwt-private.pem  │
