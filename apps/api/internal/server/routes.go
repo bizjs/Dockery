@@ -34,6 +34,7 @@ func registerRoutes(r *router.Router, svcs *service.Services, sm *session.Manage
 func registerPublicRoutes(r *router.Router, svcs *service.Services) {
 	svcs.System.Register(r)
 	r.GET("/token", svcs.Token.Issue)
+	r.PUT("/v2/{name:.+}/manifests/{reference}", svcs.TagGuard.PutManifest)
 	// Webhook callback from the upstream distribution registry. Auth'd
 	// via a shared bearer secret (see biz/webhook_secret.go), not session.
 	// Loopback-only in the container image; in remote deployments, the
@@ -93,5 +94,7 @@ func registerAdminRoutes(api *router.Router, svcs *service.Services) {
 
 	g.POST("/admin/gc", svcs.Admin.TriggerGC)
 	g.POST("/admin/rotate-signing-key", svcs.Admin.RotateKey)
+	g.GET("/admin/registry-policy", svcs.RegistryPolicy.Get)
+	g.PATCH("/admin/registry-policy", svcs.RegistryPolicy.Update)
 	g.GET("/audit", svcs.Admin.Audit)
 }

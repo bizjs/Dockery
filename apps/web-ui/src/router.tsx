@@ -10,6 +10,7 @@ import LoginPage from '@/pages/Login';
 import UsersPage from '@/pages/Admin/Users';
 import MaintenancePage from '@/pages/Admin/Maintenance';
 import AuditPage from '@/pages/Admin/Audit';
+import SettingsPage from '@/pages/Admin/Settings';
 
 export const router = createBrowserRouter([
   {
@@ -32,6 +33,14 @@ export const router = createBrowserRouter([
         element: (
           <AuthGuard adminOnly>
             <UsersPage />
+          </AuthGuard>
+        ),
+      },
+      {
+        path: 'admin/settings',
+        element: (
+          <AuthGuard adminOnly>
+            <SettingsPage />
           </AuthGuard>
         ),
       },

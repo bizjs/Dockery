@@ -9,6 +9,7 @@
 - 📦 推送 / 拉取 / 浏览 OCI + Docker v2 镜像
 - 🔐 CLI 与 Web UI 共用账户：三档角色（`admin` / `write` / `view`）+ per-user glob 仓库模式
 - 🔑 Ed25519 短命 registry JWT（默认 5 分钟，registry 通过 JWKS 验签）
+- 🛡️ 可动态启用 Tag 防覆盖：现有 tag 不得移动到不同 digest（默认关闭）
 - 🌐 React 19 UI：登录、角色守卫、用户 & 权限管理、改密
 - 🐳 一个镜像、一个端口、SQLite + 文件系统 blob；备份只需 `/data`
 
@@ -103,6 +104,10 @@ docker exec -it dockery dockery-api -conf /etc/dockery user delete alice
 
 系统会拒绝删除或降级最后一个 admin。
 
+## Tag 防覆盖设置
+
+管理员可在 **Settings → Registry → Tag overwrite protection** 动态切换，无需重启。开关默认关闭，升级后继续允许覆盖，避免打断已有 CI；空库直接使用默认值且不写配置行，只有管理员实际修改时才在 SQLite 的统一 `system_settings` 表创建或更新 key。开启后首次创建 tag 和重复推送同一 digest 仍然成功，把现有 tag 移到不同 digest 则返回 Registry 原生 `409 DENIED`。需要滚动更新 `latest` 等 tag 时，可把精确 tag 名加入覆盖例外列表；列表默认空，不支持通配符。删除旧 tag 后也可重新使用该名称。
+
 ## 配置
 
 ### 环境变量
@@ -172,9 +177,11 @@ volumes:
                    [ nginx ]
     ┌────────────┬────────┬────────────┐
     │            │        │            │
-   / 静态     /token   /api/*        /v2/*
+   / 静态     /token   /api/*       /v2/*
     │            │        │            │
  web-ui    dockery-api :3001   distribution :5001
+                 ▲                    ▲
+                 └── manifest PUT ────┘  其它 /v2/* 直达 registry
                  │                    ▲
                  ├── SQLite           │
                  ├── jwt-private.pem  │
@@ -186,15 +193,14 @@ volumes:
 ## 本地开发
 
 ```bash
-# 前端（:5173）
+# 整套后端（api + registry + nginx，:5001，从源码构建）
+make dev DOCKERY_ADMIN_PASSWORD='change-me'
+
+# 前端热重载（:5173，/api /token /v2 都代理到 :5001）
 cd apps/web-ui && pnpm install && pnpm dev
-
-# 后端（:5001）
-cd apps/api && make run
-
-# 裸 registry（:5000），给前端 /v2 代理用
-docker run -p 5000:5000 distribution/distribution:3.1.0
 ```
+
+只改 Go 代码时也可以裸跑 `cd apps/api && make run`（同样监听 :5001，与 `make dev` 二选一）。
 
 ## 发布
 

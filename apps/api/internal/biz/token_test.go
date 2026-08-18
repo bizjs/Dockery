@@ -1,6 +1,7 @@
 package biz
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -151,5 +152,36 @@ func TestExpiresIn(t *testing.T) {
 	iss, _ := newTestIssuer(t)
 	if got := iss.ExpiresIn(); got != 300 {
 		t.Errorf("ExpiresIn = %d, want 300", got)
+	}
+}
+
+func TestVerifyRegistryAccess(t *testing.T) {
+	iss, _ := newTestIssuer(t)
+	token, err := iss.IssueRegistryToken("alice", []RegistryAccess{
+		{Type: "repository", Name: "team/app", Actions: []string{"pull", "push"}},
+	})
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	actor, err := iss.VerifyRegistryAccess(token, "team/app", "push")
+	if err != nil || actor != "alice" {
+		t.Fatalf("verify actor=%q err=%v", actor, err)
+	}
+	if _, err := iss.VerifyRegistryAccess(token, "other/app", "push"); !errors.Is(err, ErrRegistryAccessDenied) {
+		t.Fatalf("wrong repository error=%v, want access denied", err)
+	}
+	if _, err := iss.VerifyRegistryAccess("not-a-jwt", "team/app", "push"); !errors.Is(err, ErrInvalidRegistryToken) {
+		t.Fatalf("malformed token error=%v, want invalid token", err)
+	}
+}
+
+func TestParseBearerToken(t *testing.T) {
+	if got, ok := ParseBearerToken("bearer abc.def"); !ok || got != "abc.def" {
+		t.Fatalf("case-insensitive bearer parse = %q, %v", got, ok)
+	}
+	for _, header := range []string{"", "Basic abc", "Bearer   "} {
+		if _, ok := ParseBearerToken(header); ok {
+			t.Fatalf("accepted invalid Authorization header %q", header)
+		}
 	}
 }

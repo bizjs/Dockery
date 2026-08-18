@@ -47,6 +47,7 @@ func newApp(
 	logger log.Logger,
 	hs *http.Server,
 	users *biz.UserUsecase,
+	policy *biz.RegistryPolicyBiz,
 	meta *biz.RepoMetaUsecase,
 	reconciler *biz.Reconciler,
 	dockery *conf.Dockery,
@@ -60,8 +61,11 @@ func newApp(
 	if v := os.Getenv("DOCKERY_ADMIN_PASSWORD"); v != "" {
 		adminPass = v
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	if err := policy.Initialize(ctx); err != nil {
+		log.NewHelper(logger).Fatalf("initialize registry policy: %v", err)
+	}
 	if err := users.EnsureAdmin(ctx, adminUser, adminPass); err != nil {
 		if errors.Is(err, biz.ErrAdminPasswordUnset) {
 			log.NewHelper(logger).Fatalf(

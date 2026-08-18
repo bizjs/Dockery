@@ -43,27 +43,21 @@
 **A. 本地 build + 跑**(适合二次定制):
 
 ```bash
-git clone https://github.com/bizjs/light-registry.git dockery && cd dockery
-export DOCKERY_ADMIN_PASSWORD='change-me-on-first-boot'
-docker compose up --build -d
+git clone https://github.com/bizjs/Dockery.git dockery && cd dockery
+make dev DOCKERY_ADMIN_PASSWORD='change-me-on-first-boot'
 ```
+
+(`make dev` 包装 `docker compose -f docker-compose.dev.yaml up --build -d`,从源码构建
+all-in-one 镜像并整套跑起来;`make dev-logs` / `make dev-down` / `make dev-reset` 管理生命周期。)
 
 **B. 拉 GHCR 镜像**(适合纯部署):
 
 ```bash
-curl -O https://raw.githubusercontent.com/bizjs/light-registry/main/docker-compose.ghcr.yml
+curl -O https://raw.githubusercontent.com/bizjs/Dockery/main/docker-compose.ghcr.yml
 export DOCKERY_ADMIN_PASSWORD='change-me-on-first-boot'
 export REGISTRY_AUTH_TOKEN_REALM='https://registry.example.com/token'   # 生产必改
 docker compose -f docker-compose.ghcr.yml pull
 docker compose -f docker-compose.ghcr.yml up -d
-```
-
-**C. 开发模式**(前端跑 Vite、后端跑 `make run`、registry 跑裸容器):
-
-```bash
-docker compose -f docker-compose.dev.yaml up -d        # 只起 :5000 的 registry
-cd apps/api && make run                                # :5001
-cd apps/web-ui && pnpm install && pnpm dev             # :5173
 ```
 
 访问 http://localhost:5001 — 用 `admin` / 上面设置的密码登录。
@@ -330,18 +324,18 @@ docker compose -f docker-compose.ghcr.yml pull
 docker compose -f docker-compose.ghcr.yml up -d    # 重建 dockery 容器
 ```
 
-SQLite schema 会自动 migrate(`ent.Schema.Create` 幂等)。密钥持久化在 volume,升级不丢。
+SQLite schema 会自动 migrate（`ent.Schema.Create` 幂等且默认只增不删）。首次升级到支持动态设置的版本时只新增空的 `system_settings` 表；`registry.prevent_tag_overwrite` 缺失时业务使用默认 false，`registry.tag_overwrite_exclusions` 缺失时使用空列表，启动不会写默认行。只有管理员实际修改时才创建或更新对应 key。两项策略在事务中更新，主开关的 version 作为整个策略的乐观锁版本。旧版保存的 boolean 开关值无需转换即可读取，旧用户、权限、审计和仓库元数据不会被改写，重复启动也不会制造配置记录。密钥持久化在 volume,升级不丢。
 
 **回滚**:
 
 ```bash
-export DOCKERY_IMAGE=ghcr.io/bizjs/light-registry:v0.1.0
+export DOCKERY_IMAGE=ghcr.io/bizjs/dockery:0.8.0
 docker compose -f docker-compose.ghcr.yml up -d
 ```
 
-`DOCKERY_IMAGE` 就是 `docker-compose.ghcr.yml` 里用来拉镜像的变量,不指定就是 `:latest`。**生产请锁版本**(`:v0.1.x`),不要跟 `:latest`。
+`DOCKERY_IMAGE` 就是 `docker-compose.ghcr.yml` 里用来拉镜像的变量,不指定就是 `:latest`。**生产请锁版本**(如 `:0.9.0`,镜像 tag 不带 `v` 前缀),不要跟 `:latest`。
 
-**schema 降级**:ent auto-migrate 只加不删,回滚老版本通常没问题。但新版本若加了非空字段,回滚后会卡在 "column not found"。出现这种断层会在 release note 里明确标注,届时 restore 备份再启老版本。
+**schema 降级**：ent auto-migrate 只加不删，旧版本会忽略不认识的 `system_settings` 表，表和值仍保留。但功能不会随数据库一起降级兼容：若保护开启后回滚到没有 TagGuard 的旧镜像，旧版本期间会重新允许覆盖；再次升级会恢复保存的开启状态。正常回滚前应先到 Settings 关闭开关。其它不兼容字段变更会在 release note 明确标注，届时 restore 备份再启老版本。
 
 ---
 

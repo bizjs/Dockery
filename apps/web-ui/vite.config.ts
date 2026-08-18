@@ -21,12 +21,16 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // dockery-api (Go) runs locally via `make run` on :5001
+      // :5001 is the `make dev` all-in-one container (nginx fronting
+      // dockery-api + registry), or a bare-metal `make run` api — both
+      // answer /api and /token on the same port.
       '/api': { target: 'http://localhost:5001', changeOrigin: true },
-      // docker CLI token realm — same Go process
+      // docker CLI token realm — same upstream
       '/token': { target: 'http://localhost:5001', changeOrigin: true },
-      // Distribution registry runs in docker-compose.dev.yaml on host :5000
-      '/v2': { target: 'http://localhost:5000', changeOrigin: true },
+      // Raw registry API. The UI itself never calls /v2 (it goes through
+      // /api/registry/*); kept for poking the registry from the browser.
+      // With `make dev`, nginx exposes /v2 on :5001 as well.
+      '/v2': { target: 'http://localhost:5001', changeOrigin: true },
     },
   },
 });

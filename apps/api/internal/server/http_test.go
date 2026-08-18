@@ -10,6 +10,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +38,7 @@ type harness struct {
 	baseURL string
 	client  *http.Client
 	users   *biz.UserUsecase
+	policy  *biz.RegistryPolicyBiz
 	stop    func()
 }
 
@@ -80,6 +82,10 @@ func newHarness(t *testing.T) *harness {
 	userUC := biz.NewUserUsecase(userRepo)
 	permUC := biz.NewPermissionUsecase(permRepo, userRepo)
 	auditUC := biz.NewAuditUsecase(auditRepo, logger)
+	policyBiz := biz.NewRegistryPolicyBiz(d.DB())
+	if err := policyBiz.Initialize(context.Background()); err != nil {
+		t.Fatalf("initialize registry policy: %v", err)
+	}
 	maint := biz.NewMaintenance()
 	// Use a no-op GC runner in tests — the endpoint isn't exercised here
 	// and we don't want to actually shell out to supervisorctl.
@@ -98,14 +104,16 @@ func newHarness(t *testing.T) *harness {
 	}
 
 	svcs := &service.Services{
-		System:     service.NewSystemService(),
-		Auth:       service.NewAuthService(userUC, auditUC),
-		User:       service.NewUserService(userUC, permUC, auditUC),
-		Permission: service.NewPermissionService(permUC, userUC, auditUC),
-		Registry:   service.NewRegistryService(userUC, permUC, iss, auditUC, maint, metaUC, fetcher, upstream),
-		Token:      service.NewTokenService(userUC, permUC, iss, auditUC),
-		Admin:      service.NewAdminService(auditUC, gcRunner),
-		Webhook:    service.NewWebhookService(whSecret, metaUC),
+		System:         service.NewSystemService(),
+		Auth:           service.NewAuthService(userUC, auditUC),
+		User:           service.NewUserService(userUC, permUC, auditUC),
+		Permission:     service.NewPermissionService(permUC, userUC, auditUC),
+		Registry:       service.NewRegistryService(userUC, permUC, iss, auditUC, maint, metaUC, fetcher, upstream),
+		RegistryPolicy: service.NewRegistryPolicyService(policyBiz, auditUC),
+		TagGuard:       service.NewTagGuardService(policyBiz, iss, auditUC, upstream, "http://dockery.test/token"),
+		Token:          service.NewTokenService(userUC, permUC, iss, auditUC),
+		Admin:          service.NewAdminService(auditUC, gcRunner),
+		Webhook:        service.NewWebhookService(whSecret, metaUC),
 	}
 
 	// We still build a kratos http.Server for its option chain
@@ -140,6 +148,7 @@ func newHarness(t *testing.T) *harness {
 		baseURL: testSrv.URL,
 		client:  client,
 		users:   userUC,
+		policy:  policyBiz,
 		stop: func() {
 			testSrv.Close()
 			cleanup()
@@ -381,6 +390,10 @@ func TestRouteMatrix(t *testing.T) {
 		{http.MethodGet, "/api/users/1/permissions", nil, 401},
 		{http.MethodPost, "/api/admin/gc", nil, 401},
 		{http.MethodPost, "/api/admin/rotate-signing-key", nil, 401},
+		{http.MethodGet, "/api/admin/registry-policy", nil, 401},
+		{http.MethodPatch, "/api/admin/registry-policy", map[string]any{
+			"prevent_tag_overwrite": true, "version": 1,
+		}, 401},
 		{http.MethodGet, "/api/audit", nil, 401},
 	}
 
@@ -487,5 +500,88 @@ func TestAdminFlow(t *testing.T) {
 	})
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("short-password want 422, got %d", resp.StatusCode)
+	}
+}
+
+func TestRegistryPolicyAdminAPIIsDynamicAndVersioned(t *testing.T) {
+	h := newHarness(t)
+	defer h.stop()
+
+	ctx := context.Background()
+	if err := h.users.EnsureAdmin(ctx, "admin", "a-strong-password-42"); err != nil {
+		t.Fatalf("ensure admin: %v", err)
+	}
+	// Seed the session cookie before login. The current session middleware
+	// writes Set-Cookie after a successful handler has already committed its
+	// body, while the pre-login 401 is encoded after middleware unwinds.
+	// This mirrors the UI bootstrap request and the existing AdminFlow test.
+	h.do(http.MethodGet, "/api/auth/me", nil)
+	resp, raw := h.do(http.MethodPost, "/api/auth/login", map[string]string{
+		"username": "admin", "password": "a-strong-password-42",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login want 200, got %d; body=%s", resp.StatusCode, raw)
+	}
+	resp, raw = h.do(http.MethodGet, "/api/auth/me", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("authenticated session check want 200, got %d; body=%s", resp.StatusCode, raw)
+	}
+
+	resp, raw = h.do(http.MethodGet, "/api/admin/registry-policy", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get policy want 200, got %d; body=%s", resp.StatusCode, raw)
+	}
+	var current struct {
+		Prevent    bool     `json:"prevent_tag_overwrite"`
+		Exclusions []string `json:"overwrite_exclusions"`
+		Version    int64    `json:"version"`
+	}
+	env := h.decode(raw)
+	if err := json.Unmarshal(env.Data, &current); err != nil {
+		t.Fatalf("decode policy: %v", err)
+	}
+	if current.Prevent || current.Version != 0 || len(current.Exclusions) != 0 {
+		t.Fatalf("unexpected default policy: %+v", current)
+	}
+
+	resp, raw = h.do(http.MethodPatch, "/api/admin/registry-policy", map[string]any{
+		"prevent_tag_overwrite": true,
+		"overwrite_exclusions":  []string{"latest"},
+		"version":               current.Version,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("patch policy want 200, got %d; body=%s", resp.StatusCode, raw)
+	}
+	env = h.decode(raw)
+	if err := json.Unmarshal(env.Data, &current); err != nil {
+		t.Fatalf("decode updated policy: %v", err)
+	}
+	if !current.Prevent || current.Version != 1 || !slices.Equal(current.Exclusions, []string{"latest"}) {
+		t.Fatalf("unexpected updated policy: %+v", current)
+	}
+
+	// Older management clients omit overwrite_exclusions. The server must
+	// preserve the current list rather than clearing it.
+	resp, raw = h.do(http.MethodPatch, "/api/admin/registry-policy", map[string]any{
+		"prevent_tag_overwrite": false,
+		"version":               current.Version,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("compatible patch policy want 200, got %d; body=%s", resp.StatusCode, raw)
+	}
+	env = h.decode(raw)
+	if err := json.Unmarshal(env.Data, &current); err != nil {
+		t.Fatalf("decode compatible policy update: %v", err)
+	}
+	if current.Prevent || current.Version != 2 || !slices.Equal(current.Exclusions, []string{"latest"}) {
+		t.Fatalf("compatible patch did not preserve exclusions: %+v", current)
+	}
+
+	resp, raw = h.do(http.MethodPatch, "/api/admin/registry-policy", map[string]any{
+		"prevent_tag_overwrite": false,
+		"version":               0,
+	})
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("stale patch want 409, got %d; body=%s", resp.StatusCode, raw)
 	}
 }

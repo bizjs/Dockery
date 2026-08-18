@@ -5,7 +5,7 @@ server:
   http:
     # Internal only; nginx fronts us on 5000.
     addr: 127.0.0.1:3001
-    timeout: 5s
+    timeout: 30s
 data:
   database:
     driver: sqlite

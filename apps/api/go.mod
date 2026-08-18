@@ -13,6 +13,7 @@ require (
 	go.uber.org/automaxprocs v1.5.1
 	golang.org/x/crypto v0.49.0
 	golang.org/x/mod v0.33.0
+	golang.org/x/sync v0.20.0
 	google.golang.org/protobuf v1.34.1
 	modernc.org/sqlite v1.34.1
 )
@@ -48,7 +49,6 @@ require (
 	go.opentelemetry.io/otel v1.24.0 // indirect
 	go.opentelemetry.io/otel/metric v1.24.0 // indirect
 	go.opentelemetry.io/otel/trace v1.24.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240528184218-531527333157 // indirect

@@ -50,6 +50,8 @@ export const AUDIT_ACTIONS = [
   'gc.started',
   'gc.completed',
   'key.rotated',
+  'registry.policy.updated',
+  'registry.tag.overwrite_denied',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

@@ -3,6 +3,7 @@
 package migrate
 
 import (
+	"entgo.io/ent/dialect/entsql"
 	"entgo.io/ent/dialect/sql/schema"
 	"entgo.io/ent/schema/field"
 )
@@ -117,6 +118,21 @@ var (
 			},
 		},
 	}
+	// SystemSettingsColumns holds the columns for the "system_settings" table.
+	SystemSettingsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "key", Type: field.TypeString, Unique: true},
+		{Name: "value", Type: field.TypeJSON},
+		{Name: "version", Type: field.TypeInt64, Default: 1},
+		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "updated_by", Type: field.TypeString, Default: "system"},
+	}
+	// SystemSettingsTable holds the schema information for the "system_settings" table.
+	SystemSettingsTable = &schema.Table{
+		Name:       "system_settings",
+		Columns:    SystemSettingsColumns,
+		PrimaryKey: []*schema.Column{SystemSettingsColumns[0]},
+	}
 	// UsersColumns holds the columns for the "users" table.
 	UsersColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
@@ -145,10 +161,18 @@ var (
 		AuditLogsTable,
 		RepoMetaTable,
 		RepoPermissionsTable,
+		SystemSettingsTable,
 		UsersTable,
 	}
 )
 
 func init() {
 	RepoPermissionsTable.ForeignKeys[0].RefTable = UsersTable
+	SystemSettingsTable.Annotation = &entsql.Annotation{
+		Table: "system_settings",
+	}
+	SystemSettingsTable.Annotation.Checks = map[string]string{
+		"system_settings_key_nonempty":     "length(key) > 0",
+		"system_settings_version_positive": "version > 0",
+	}
 }

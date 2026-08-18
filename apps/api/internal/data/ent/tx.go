@@ -18,6 +18,8 @@ type Tx struct {
 	RepoMeta *RepoMetaClient
 	// RepoPermission is the client for interacting with the RepoPermission builders.
 	RepoPermission *RepoPermissionClient
+	// SystemSetting is the client for interacting with the SystemSetting builders.
+	SystemSetting *SystemSettingClient
 	// User is the client for interacting with the User builders.
 	User *UserClient
 
@@ -154,6 +156,7 @@ func (tx *Tx) init() {
 	tx.AuditLog = NewAuditLogClient(tx.config)
 	tx.RepoMeta = NewRepoMetaClient(tx.config)
 	tx.RepoPermission = NewRepoPermissionClient(tx.config)
+	tx.SystemSetting = NewSystemSettingClient(tx.config)
 	tx.User = NewUserClient(tx.config)
 }
 

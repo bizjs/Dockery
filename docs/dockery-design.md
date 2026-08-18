@@ -43,7 +43,8 @@ Dockery = **Docker Registry v3.1.0 + 现代 Web UI + 账户/权限系统** 的�
                        ├── SQLite (/data/db)          │
                        ├── /data/config/jwt-private.pem
                        ├── /data/config/jwt-jwks.json ┤ (registry 启动时读 JWKS)
-                       └── 代理 + 注入 JWT ───────────┘ (UI 场景)
+                       ├── 代理 + 注入 JWT ───────────┘ (UI 场景)
+                       └── manifest PUT Guard ────────┘ (其余 /v2/* 直达)
 ```
 
 三个长驻进程 + 一份 SQLite + 一把 Ed25519 私钥（JWKS 由私钥在启动时派生并写盘）。
@@ -57,7 +58,7 @@ Dockery = **Docker Registry v3.1.0 + 现代 Web UI + 账户/权限系统** 的�
 
 ### 2.2 两条鉴权路径
 
-**docker CLI 路径**：`docker push/pull` → nginx → registry (401) → nginx → `/token` → dockery-api → Ed25519 签 JWT → registry 验签 → 放行。
+**docker CLI 路径**：`docker push/pull` → nginx → registry (401) → nginx → `/token` → dockery-api → Ed25519 签 JWT。普通 `/v2/*` 请求带 JWT 直达 registry；最终的 manifest PUT 经 dockery-api TagGuard，关闭策略时透明转发，开启时验证 push scope、锁定 repo/tag、HEAD 当前 digest 后再决定放行或返回 `409 DENIED`。
 **UI 路径**：浏览器 → nginx → `/api/registry/*` → dockery-api（查 session cookie → 查权限 → 生成短命 JWT 注入）→ registry → 响应回流。
 
 两条路径**权限语义完全一致**，来自同一份 `users` + `repo_permissions` 表。
@@ -266,10 +267,23 @@ CREATE TABLE repo_meta (
   refreshed_at   INTEGER NOT NULL                 -- unix seconds; reconciler 用来判断陈旧
 );
 
+-- 统一动态配置表。业务层为每个稳定 key 提供强类型 API 与校验，
+-- 不向管理员暴露任意 JSON 键值编辑器。
+CREATE TABLE system_settings (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  key         TEXT NOT NULL UNIQUE,
+  value       JSON NOT NULL,
+  version     INTEGER NOT NULL DEFAULT 1 CHECK(version > 0),
+  updated_at  INTEGER NOT NULL,
+  updated_by  TEXT NOT NULL DEFAULT 'system'
+);
+
 CREATE INDEX idx_audit_ts ON audit_log(ts DESC);
 CREATE INDEX idx_perm_user ON repo_permissions(user_id);
 CREATE UNIQUE INDEX idx_repo_meta_repo ON repo_meta(repo);
 ```
+
+动态设置采用“缺失即默认”语义：空表读取 `registry.prevent_tag_overwrite` 得到虚拟 `false/version=0`，读取 `registry.tag_overwrite_exclusions` 得到空列表，启动不写行；管理员首次实际修改时才写入。防覆盖开关继续保存为 JSON boolean 以兼容旧版数据，精确 tag 例外保存为独立 JSON 数组，两项在同一事务内更新并以主开关 version 做乐观并发控制。
 
 ### 5.2 文件系统布局（/data）
 
@@ -316,6 +330,7 @@ CREATE UNIQUE INDEX idx_repo_meta_repo ON repo_meta(repo);
 | `/api/internal/registry-events` | POST | Bearer（共享密钥） | distribution 回调入口；见 §8.6 |
 | `/api/admin/gc` | POST | Session + admin | 触发垃圾回收 |
 | `/api/admin/rotate-signing-key` | POST | Session + admin | 密钥轮换（重启 registry） |
+| `/api/admin/registry-policy` | GET/PATCH | Session + admin | 读取/动态修改 tag 防覆盖策略；PATCH 带 version 乐观锁 |
 | `/api/audit` | GET | Session + admin | 审计日志查询 |
 
 `/api/internal/*` 在 nginx 层 `return 404`；真实调用只从容器回环进来（distribution 和 dockery-api 同容器，走 `127.0.0.1:3001`）。
@@ -457,8 +472,9 @@ Password: ****
 1. PUSH 触发 `PUT /v2/alice/app/blobs/uploads/...`；
 2. registry 401 + `scope="repository:alice/app:pull,push"`；
 3. Docker 调 `/token` 得到含该 scope 的 JWT；
-4. 带 Bearer JWT 重试 → registry 验签 → 放行；
-5. 分块上传完成。
+4. 带 Bearer JWT 重试；blob 上传仍由 nginx 直达 registry；
+5. push 最后的 `PUT /v2/{repo}/manifests/{tag}` 由 nginx 转到 TagGuard；
+6. 策略关闭时透明转发；开启时本地复验 JWT push scope，并在 repo/tag 锁内 HEAD 当前 digest：不存在或 digest 相同则转发，不同则返回 `409 DENIED`；上游状态不可确认时返回 503（fail closed）。
 
 ### 8.2 UI 登录 + 浏览
 

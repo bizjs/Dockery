@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"api/internal/util/registryfetch"
@@ -125,6 +126,58 @@ func (i *TokenIssuer) ExpiresIn() int {
 // IssuedAt returns the current wall-clock time as the /token response
 // expects ("issued_at"). Callers typically format it in RFC 3339.
 func (i *TokenIssuer) IssuedAt() time.Time { return i.now() }
+
+var (
+	ErrInvalidRegistryToken = errors.New("invalid registry token")
+	ErrRegistryAccessDenied = errors.New("registry access denied")
+)
+
+// VerifyRegistryAccess validates a Dockery-issued registry JWT and checks an
+// exact repository action. Distribution still validates the same token on the
+// forwarded request; this local verification prevents TagGuard from leaking
+// current tag state to unauthenticated callers.
+func (i *TokenIssuer) VerifyRegistryAccess(rawToken, repository, action string) (string, error) {
+	claims := &registryClaims{}
+	parser := jwt.NewParser(
+		jwt.WithValidMethods([]string{jwt.SigningMethodEdDSA.Alg()}),
+		jwt.WithIssuer(i.issuer),
+		jwt.WithAudience(i.audience),
+		jwt.WithLeeway(5*time.Second),
+	)
+	tok, err := parser.ParseWithClaims(rawToken, claims, func(token *jwt.Token) (any, error) {
+		if token.Method != jwt.SigningMethodEdDSA {
+			return nil, ErrInvalidRegistryToken
+		}
+		kid, _ := token.Header["kid"].(string)
+		if kid == "" || kid != i.keystore.KID() {
+			return nil, ErrInvalidRegistryToken
+		}
+		return i.keystore.Public(), nil
+	})
+	if err != nil || tok == nil || !tok.Valid {
+		return "", fmt.Errorf("%w: %v", ErrInvalidRegistryToken, err)
+	}
+	for _, access := range claims.Access {
+		if access.Type != "repository" || access.Name != repository {
+			continue
+		}
+		for _, granted := range access.Actions {
+			if granted == action || granted == "*" {
+				return claims.Subject, nil
+			}
+		}
+	}
+	return claims.Subject, ErrRegistryAccessDenied
+}
+
+func ParseBearerToken(header string) (string, bool) {
+	const prefix = "Bearer "
+	if len(header) <= len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
+		return "", false
+	}
+	token := strings.TrimSpace(header[len(prefix):])
+	return token, token != ""
+}
 
 // newJTI returns a 128-bit random identifier base64url-encoded.
 // Used as JWT "jti" — the registry may (but doesn't have to) de-dup on it.

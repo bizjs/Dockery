@@ -11,6 +11,8 @@ var ProviderSet = wire.NewSet(
 	NewUserService,
 	NewPermissionService,
 	NewRegistryService,
+	NewRegistryPolicyService,
+	NewTagGuardService,
 	NewTokenService,
 	NewAdminService,
 	NewWebhookService,
@@ -19,12 +21,14 @@ var ProviderSet = wire.NewSet(
 
 // Services aggregates all Dockery service objects.
 type Services struct {
-	System     *SystemService
-	Auth       *AuthService
-	User       *UserService
-	Permission *PermissionService
-	Registry   *RegistryService
-	Token      *TokenService
-	Admin      *AdminService
-	Webhook    *WebhookService
+	System         *SystemService
+	Auth           *AuthService
+	User           *UserService
+	Permission     *PermissionService
+	Registry       *RegistryService
+	RegistryPolicy *RegistryPolicyService
+	TagGuard       *TagGuardService
+	Token          *TokenService
+	Admin          *AdminService
+	Webhook        *WebhookService
 }

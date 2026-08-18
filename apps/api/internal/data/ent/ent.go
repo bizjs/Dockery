@@ -6,6 +6,7 @@ import (
 	"api/internal/data/ent/auditlog"
 	"api/internal/data/ent/repometa"
 	"api/internal/data/ent/repopermission"
+	"api/internal/data/ent/systemsetting"
 	"api/internal/data/ent/user"
 	"context"
 	"errors"
@@ -79,6 +80,7 @@ func checkColumn(table, column string) error {
 			auditlog.Table:       auditlog.ValidColumn,
 			repometa.Table:       repometa.ValidColumn,
 			repopermission.Table: repopermission.ValidColumn,
+			systemsetting.Table:  systemsetting.ValidColumn,
 			user.Table:           user.ValidColumn,
 		})
 	})
