@@ -2,6 +2,32 @@
 
 本文件记录 Dockery 的所有重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.10.0] - 2026-08-17
+
+### 修复
+
+- harden concurrency, injection, and request-racing issues
+
+### 变更
+
+- replace RegistryPolicyUsecase with RegistryPolicyBiz across the codebase
+
+### 文档
+
+- update docs
+- clarify DOCKERY_IMAGE version tag format
+- update dev setup to use make dev all-in-one stack
+- **design**: drop deleted docker-compose.yaml references
+
+### 新增
+
+- update web
+- allow set tag latest for overrides
+- add dynamic tag overwrite protection settings and UI integration
+- implement registry access control and tag guard policy
+- add SystemSetting entity with CRUD operations
+
+
 ## [0.9.0] - 2026-06-08
 
 ### 修复
