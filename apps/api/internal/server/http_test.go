@@ -39,10 +39,15 @@ type harness struct {
 	client  *http.Client
 	users   *biz.UserUsecase
 	policy  *biz.RegistryPolicyBiz
+	meta    *biz.RepoMetaUsecase
 	stop    func()
 }
 
 func newHarness(t *testing.T) *harness {
+	return newHarnessWithUpstream(t, "http://127.0.0.1:1")
+}
+
+func newHarnessWithUpstream(t *testing.T, upstreamURL string) *harness {
 	t.Helper()
 
 	logger := log.NewStdLogger(io.Discard)
@@ -90,9 +95,7 @@ func newHarness(t *testing.T) *harness {
 	// Use a no-op GC runner in tests — the endpoint isn't exercised here
 	// and we don't want to actually shell out to supervisorctl.
 	gcRunner := biz.NewGCRunner(biz.GCConfig{}, maint, auditUC, nil, nil, logger)
-	// Fake upstream URL — the cache-backed Overview handler doesn't dial
-	// anything, and the reconciler / webhook path is not exercised here.
-	upstream := biz.RegistryUpstreamURL("http://127.0.0.1:1")
+	upstream := biz.RegistryUpstreamURL(upstreamURL)
 	fetcher := biz.NewRegistryFetchClient(iss, upstream)
 	metaUC := biz.NewRepoMetaUsecase(repoMetaRepo, fetcher, logger)
 	t.Cleanup(metaUC.Close)
@@ -149,6 +152,7 @@ func newHarness(t *testing.T) *harness {
 		client:  client,
 		users:   userUC,
 		policy:  policyBiz,
+		meta:    metaUC,
 		stop: func() {
 			testSrv.Close()
 			cleanup()

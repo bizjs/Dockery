@@ -868,6 +868,12 @@ func (s *RegistryService) DeleteManifest(ctx *router.Context) error {
 	if status != http.StatusAccepted && status != http.StatusOK {
 		return response.NewBizError(status, 50000, fmt.Sprintf("upstream: %s", trimBody(body)))
 	}
+	// The Catalog reads repo_meta rather than querying distribution on every
+	// request. Refresh it directly after a UI/API delete instead of relying
+	// solely on the asynchronous distribution webhook, which may be delayed
+	// or dropped. EnqueueRefresh is deduplicated, so the webhook can still act
+	// as the fallback for deletes performed outside this service.
+	s.meta.EnqueueRefresh(name)
 	s.audit.Write(ctx.Context(), biz.AuditEntry{
 		Actor:    sessionUsername(ctx),
 		Action:   biz.ActionImageDeleted,
